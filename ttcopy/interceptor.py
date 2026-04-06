@@ -47,6 +47,23 @@ class VideoInterceptor:
                 author = ""
                 if isinstance(author_info, dict):
                     author = author_info.get("uniqueId") or author_info.get("nickname", "")
-                self.video_metadata[vid] = {"author": author, "desc": item.get("desc", "")}
+
+                # Extract image URLs for photo posts
+                image_urls = []
+                image_post = item.get("imagePost", {})
+                if isinstance(image_post, dict):
+                    for img in image_post.get("images", []):
+                        if not isinstance(img, dict):
+                            continue
+                        url_list = img.get("imageURL", {}).get("urlList", [])
+                        if url_list:
+                            image_urls.append(url_list[0])
+
+                self.video_metadata[vid] = {
+                    "author": author,
+                    "desc": item.get("desc", ""),
+                    "type": "photo" if image_urls else "video",
+                    "image_urls": image_urls,
+                }
         except Exception:
             pass
