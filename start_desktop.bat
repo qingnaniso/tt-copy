@@ -2,11 +2,12 @@
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-title TT-Copy Desktop - TikTok Desktop Downloader
+title TT-Copy Desktop Shell
 
 echo.
 echo  ==========================================
-echo    TT-Copy Desktop - TikTok Desktop Downloader
+echo    TT-Copy Desktop Shell
+echo    Playwright + Chromium + Qt Shell
 echo  ==========================================
 echo.
 
@@ -66,11 +67,11 @@ if not exist "%PIP_EXE%" (
     echo  [2/4] pip                  OK
 )
 
-:: ---- Step 3 & 4: Install deps ----
+:: ---- Step 3: Install deps ----
 if not exist "%SETUP_FLAG%" (
     echo.
     echo  [3/4] Installing dependencies...
-    echo        ^(PyQt6 + WebEngine, this takes 3-5 min on first run^)
+    echo        ^(PyQt6 + Playwright, this takes 3-5 min on first run^)
     echo.
 
     "%PIP_EXE%" install -r requirements.txt --no-warn-script-location -q
@@ -81,17 +82,25 @@ if not exist "%SETUP_FLAG%" (
     )
 
     echo  [3/4] Dependencies        OK
-
+    
+    :: Install Chromium
+    echo.
+    echo  [4/4] Downloading Chromium...
+    "%PYTHON_EXE%" -m playwright install chromium
+    
     echo. > "%SETUP_FLAG%"
+    echo  [4/4] Chromium            OK
 ) else (
     echo  [3/4] Dependencies        OK
+    echo  [4/4] Chromium            OK
 )
-
-echo  [4/4] Ready to launch       OK
 
 echo.
 echo  ==========================================
-echo    Starting TT-Copy Desktop...
+echo    Starting TT-Copy Desktop Shell...
+echo.
+echo    Browser: System Chromium (video works)
+echo    Shell:   PyQt6 Control Panel
 echo  ==========================================
 echo.
 

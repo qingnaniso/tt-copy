@@ -3,7 +3,8 @@ cd "$(dirname "$0")"
 
 echo ""
 echo " =========================================="
-echo "   TT-Copy Desktop - TikTok 桌面下载器"
+echo "   TT-Copy Desktop Shell"
+echo "   Playwright + Chromium + Qt Shell"
 echo " =========================================="
 echo ""
 
@@ -34,17 +35,29 @@ fi
 
 # ---- Step 3: 装依赖 ----
 if ! .venv/bin/python -c "import PyQt6" &>/dev/null; then
-    echo " [2/3] 正在安装依赖库 (含 PyQt6，约需 2-3 分钟)..."
+    echo " [2/3] 正在安装依赖库 (PyQt6 + Playwright)..."
     .venv/bin/pip install -r requirements.txt -q
     echo " [2/3] 依赖库            OK"
 else
     echo " [2/3] 依赖库            OK"
 fi
 
+# ---- Step 4: 检查 Chromium ----
+if ! .venv/bin/python -c "from playwright.sync_api import sync_playwright; sync_playwright().chromium" &>/dev/null; then
+    echo " [3/3] 正在下载 Chromium..."
+    .venv/bin/python -m playwright install chromium
+    echo " [3/3] Chromium          OK"
+else
+    echo " [3/3] Chromium          OK"
+fi
+
 echo ""
 echo " =========================================="
-echo "   正在启动桌面版 TT-Copy..."
+echo "   正在启动 TT-Copy Desktop Shell..."
+echo ""
+echo "   浏览器: 系统 Chromium (视频播放正常)"
+echo "   外壳:   PyQt6 控制面板"
 echo " =========================================="
 echo ""
 
-.venv/bin/python -m ttcopy.desktop "$@"
+.venv/bin/python -m ttcopy.desktop_shell "$@"

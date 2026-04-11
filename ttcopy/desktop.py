@@ -130,6 +130,8 @@ class MainWindow(QMainWindow):
         self.downloader = VideoDownloader(self.config)
         self.current_video_info = None
         self.download_worker = None
+        self.media_probe_page = None
+        self.media_warning_shown = False
         
         self.setWindowTitle("TT-Copy Desktop")
         self.setMinimumSize(1200, 800)
@@ -138,6 +140,7 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self._setup_shortcuts()
         self._setup_tray()
+        self._probe_media_support()
         
         # 加载 TikTok
         self.web_view.load(QUrl("https://www.tiktok.com"))
@@ -553,6 +556,52 @@ class MainWindow(QMainWindow):
         # 底部状态栏
         self.statusBar().showMessage("快捷键: Ctrl+D 下载 | Alt+← → 前进后退 | 可直接在地址栏输入抖音链接")
         self.statusBar().setStyleSheet("background: #1a1a1a; color: #888;")
+
+    def _probe_media_support(self):
+        """检测当前 QtWebEngine 是否支持 TikTok 常用 MP4/H.264/AAC 播放。"""
+        self.media_probe_page = QWebEnginePage(self.web_page.profile(), self)
+
+        def finish_probe(result):
+            self.media_probe_page = None
+            if not isinstance(result, dict):
+                return
+
+            if result.get("mp4_h264_aac"):
+                return
+
+            self.status_label.setText("当前 QtWebEngine 缺少 MP4/H.264/AAC 解码支持")
+            if self.media_warning_shown:
+                return
+
+            self.media_warning_shown = True
+            QMessageBox.warning(
+                self,
+                "视频播放受限",
+                "当前桌面版内置的 QtWebEngine 不支持 TikTok 常用的 MP4/H.264/AAC 视频格式。\n\n"
+                "这会导致页面反复提示“We're having trouble playing this video”。\n\n"
+                "建议改用浏览器版 start.command；下载功能本身不受影响。",
+            )
+
+        def on_probe_load(ok):
+            if not ok or self.media_probe_page is None:
+                self.media_probe_page = None
+                return
+
+            js = """
+            (() => {
+              const v = document.createElement('video');
+              return {
+                mp4_h264_aac: v.canPlayType('video/mp4; codecs="avc1.42E01E, mp4a.40.2"'),
+                mp4_h264: v.canPlayType('video/mp4; codecs="avc1.42E01E"'),
+                mp4_aac: v.canPlayType('audio/mp4; codecs="mp4a.40.2"'),
+                webm_vp9_opus: v.canPlayType('video/webm; codecs="vp9, opus"'),
+              };
+            })()
+            """
+            self.media_probe_page.runJavaScript(js, finish_probe)
+
+        self.media_probe_page.loadFinished.connect(on_probe_load)
+        self.media_probe_page.setHtml("<html><body>media probe</body></html>", QUrl("https://www.tiktok.com"))
     
     def _setup_shortcuts(self):
         """设置快捷键"""
