@@ -128,7 +128,8 @@ async def export_cookies(context, path: str):
             flag = "TRUE" if domain.startswith(".") else "FALSE"
             path_val = c.get("path", "/")
             secure = "TRUE" if c.get("secure") else "FALSE"
-            expires = str(int(c.get("expires", 0)))
+            raw_expires = c.get("expires", 0)
+            expires = str(max(int(raw_expires), 0))
             name = c.get("name", "")
             value = c.get("value", "")
             f.write(f"{domain}\t{flag}\t{path_val}\t{secure}\t{expires}\t{name}\t{value}\n")

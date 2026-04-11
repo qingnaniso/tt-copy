@@ -24,6 +24,10 @@ class VideoDownloader:
             'no_warnings': True,
             'noplaylist': True,
             'socket_timeout': 30,
+            'http_headers': {
+                'User-Agent': self.config.get('user_agent', ''),
+                'Referer': 'https://www.tiktok.com/',
+            },
         }
 
         if cookies_file:
