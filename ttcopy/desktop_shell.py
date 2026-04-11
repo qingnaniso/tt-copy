@@ -716,7 +716,7 @@ class MainWindow(QMainWindow):
     
     def _on_download(self):
         """触发下载"""
-        self.log_message.emit("点击下载按钮...")
+        self._on_log("点击下载按钮...")
         if self.playwright_worker and self.playwright_worker.loop:
             future = asyncio.run_coroutine_threadsafe(
                 self.playwright_worker.download_current(),
@@ -725,14 +725,14 @@ class MainWindow(QMainWindow):
             try:
                 result = future.result(timeout=3)
                 if result:
-                    self.log_message.emit("下载请求已发送")
+                    self._on_log("下载请求已发送")
                 else:
-                    self.log_message.emit("无法识别当前内容")
+                    self._on_log("无法识别当前内容")
                     self.toast.show_message("无法识别当前内容，请先播放视频", success=False)
             except Exception as e:
-                self.log_message.emit(f"下载触发失败: {e}")
+                self._on_log(f"下载触发失败: {e}")
         else:
-            self.log_message.emit("Playwright 未就绪")
+            self._on_log("Playwright 未就绪")
             self.toast.show_message("请等待浏览器启动完成", success=False)
     
     def _on_download_requested(self, data):
@@ -741,7 +741,7 @@ class MainWindow(QMainWindow):
         video_id = data.get("videoId")
         content_type = data.get("type", "video")
         
-        self.log_message.emit(f"收到下载请求: @{author} - {video_id}")
+        self._on_log(f"收到下载请求: @{author} - {video_id}")
         
         if not video_id:
             self.toast.show_message("无法获取视频 ID", success=False)
@@ -785,12 +785,12 @@ class MainWindow(QMainWindow):
         
         if success:
             self.status_label.setText(f"✓ 下载完成")
-            self.log_message.emit(f"下载成功: {message}")
+            self._on_log(f"下载成功: {message}")
             self.toast.show_message(f"下载完成！")
             self.tray_icon.showMessage("TT-Copy", "视频下载完成！", QSystemTrayIcon.MessageIcon.Information, 3000)
         else:
             self.status_label.setText(f"✗ 下载失败")
-            self.log_message.emit(f"下载失败: {message}")
+            self._on_log(f"下载失败: {message}")
             self.toast.show_message(f"下载失败: {message}", success=False)
     
     def _on_back(self):
