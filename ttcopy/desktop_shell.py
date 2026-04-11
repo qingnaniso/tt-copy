@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QProgressBar, QSystemTrayIcon, QMenu,
+    QPushButton, QLabel, QProgressBar, QSystemTrayIcon, QMenu, QStyle,
     QFileDialog, QMessageBox, QLineEdit, QTextEdit, QSplitter
 )
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal, QObject, QThread, QSize, QTimer
@@ -161,7 +161,7 @@ class PlaywrightWorker(QThread):
     
     def _get_inject_js(self):
         """注入的 JS 代码"""
-        return """
+        return r"""
         (function() {
             if (window.__ttcopy_injected__) return;
             window.__ttcopy_injected__ = true;
@@ -172,7 +172,7 @@ class PlaywrightWorker(QThread):
             
             // 查找当前内容
             function getCurrentContent() {
-                const pathMatch = location.pathname.match(/@([^/]+)\/(video|photo)\/(\d+)/);
+                const pathMatch = location.pathname.match(/@([^/]+)/(video|photo)/(\d+)/);
                 if (pathMatch) {
                     return { author: pathMatch[1], videoId: pathMatch[3], type: pathMatch[2] };
                 }
@@ -187,7 +187,7 @@ class PlaywrightWorker(QThread):
                             el = el.parentElement;
                             const link = el.querySelector('a[href*="/video/"], a[href*="/photo/"]');
                             if (link) {
-                                const m = link.href.match(/@([^/]+)\/(video|photo)\/(\d+)/);
+                                const m = link.href.match(/@([^/]+)/(video|photo)/(\d+)/);
                                 if (m) return { author: m[1], videoId: m[3], type: m[2] };
                             }
                         }
