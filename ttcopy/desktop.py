@@ -12,7 +12,7 @@ from urllib.parse import urlencode, parse_qs, urlparse
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QProgressBar, QSystemTrayIcon, QMenu, QStyle,
-    QFileDialog, QMessageBox
+    QFileDialog, QMessageBox, QLineEdit
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
@@ -133,7 +133,96 @@ class MainWindow(QMainWindow):
         layout.setSpacing(0)
         layout.setContentsMargins(0, 0, 0, 0)
         
-        # 顶部工具栏
+        # ========== 顶部导航栏 ==========
+        nav_bar = QWidget()
+        nav_bar.setFixedHeight(44)
+        nav_bar.setStyleSheet("""
+            QWidget {
+                background: #1a1a1a;
+                border-bottom: 1px solid #333;
+            }
+            QPushButton {
+                background: transparent;
+                color: #ccc;
+                border: none;
+                padding: 6px 12px;
+                font-size: 16px;
+                min-width: 32px;
+            }
+            QPushButton:hover { color: white; background: #333; }
+            QPushButton:disabled { color: #555; }
+            QLineEdit {
+                background: #2a2a2a;
+                color: #fff;
+                border: 1px solid #444;
+                border-radius: 4px;
+                padding: 6px 10px;
+                font-size: 13px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #25c554;
+                outline: none;
+            }
+        """)
+        nav_layout = QHBoxLayout(nav_bar)
+        nav_layout.setSpacing(8)
+        nav_layout.setContentsMargins(10, 0, 10, 0)
+        
+        # 后退按钮
+        self.back_btn = QPushButton("◀")
+        self.back_btn.setToolTip("后退 (Alt+←)")
+        self.back_btn.clicked.connect(self._go_back)
+        nav_layout.addWidget(self.back_btn)
+        
+        # 前进按钮
+        self.forward_btn = QPushButton("▶")
+        self.forward_btn.setToolTip("前进 (Alt+→)")
+        self.forward_btn.clicked.connect(self._go_forward)
+        nav_layout.addWidget(self.forward_btn)
+        
+        # 刷新按钮
+        self.refresh_btn = QPushButton("↻")
+        self.refresh_btn.setToolTip("刷新 (F5)")
+        self.refresh_btn.clicked.connect(self._refresh)
+        nav_layout.addWidget(self.refresh_btn)
+        
+        nav_layout.addSpacing(10)
+        
+        # 地址栏
+        self.address_bar = QLineEdit()
+        self.address_bar.setPlaceholderText("输入网址...")
+        self.address_bar.returnPressed.connect(self._on_address_entered)
+        nav_layout.addWidget(self.address_bar, 1)
+        
+        nav_layout.addSpacing(10)
+        
+        # 主页按钮
+        self.home_btn = QPushButton("🏠")
+        self.home_btn.setToolTip("主页 (Alt+Home)")
+        self.home_btn.clicked.connect(self._go_home)
+        nav_layout.addWidget(self.home_btn)
+        
+        layout.addWidget(nav_bar)
+        
+        # ========== 下载进度条 ==========
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMaximum(100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedHeight(3)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: none;
+                background: #2a2a2a;
+            }
+            QProgressBar::chunk {
+                background: #25c554;
+            }
+        """)
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_bar)
+        
+        # ========== 工具栏 ==========
         toolbar = QWidget()
         toolbar.setFixedHeight(50)
         toolbar.setStyleSheet("""
@@ -153,12 +242,6 @@ class MainWindow(QMainWindow):
             QPushButton:pressed { background: #178a3a; }
             QPushButton:disabled { background: #666; }
             QLabel { color: #ccc; font-size: 13px; }
-            QProgressBar {
-                border: none;
-                background: #333;
-                height: 4px;
-            }
-            QProgressBar::chunk { background: #25c554; }
         """)
         toolbar_layout = QHBoxLayout(toolbar)
         toolbar_layout.setContentsMargins(15, 0, 15, 0)
@@ -177,7 +260,7 @@ class MainWindow(QMainWindow):
         toolbar_layout.addSpacing(20)
         
         # 下载按钮
-        self.download_btn = QPushButton("下载当前视频")
+        self.download_btn = QPushButton("⬇ 下载当前")
         self.download_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.download_btn.clicked.connect(self._on_download_clicked)
         toolbar_layout.addWidget(self.download_btn)
@@ -185,7 +268,7 @@ class MainWindow(QMainWindow):
         toolbar_layout.addSpacing(10)
         
         # 选择目录按钮
-        self.folder_btn = QPushButton("选择下载目录")
+        self.folder_btn = QPushButton("📁 下载目录")
         self.folder_btn.setStyleSheet("""
             QPushButton {
                 background: #444;
@@ -201,13 +284,7 @@ class MainWindow(QMainWindow):
         
         layout.addWidget(toolbar)
         
-        # 进度条
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setMaximum(0)  # 无限循环模式
-        self.progress_bar.setVisible(False)
-        layout.addWidget(self.progress_bar)
-        
-        # 浏览器视图
+        # ========== 浏览器视图 ==========
         profile = QWebEngineProfile("ttcopy_profile", self)
         profile.setHttpUserAgent(self.config.get("user_agent"))
         
@@ -218,6 +295,9 @@ class MainWindow(QMainWindow):
         self.web_view = QWebEngineView()
         self.web_view.setPage(self.web_page)
         self.web_view.loadFinished.connect(self._on_load_finished)
+        self.web_view.urlChanged.connect(self._on_url_changed)
+        self.web_view.loadProgress.connect(self._on_load_progress)
+        self.web_view.loadStarted.connect(self._on_load_started)
         
         # 设置深色背景
         self.web_view.setStyleSheet("background: #000;")
@@ -225,7 +305,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.web_view, 1)
         
         # 底部状态栏
-        self.statusBar().showMessage("快捷键: Ctrl+D 下载当前视频 | 滑动时自动识别")
+        self.statusBar().showMessage("快捷键: Ctrl+D 下载 | Alt+← → 前进后退 | 可直接在地址栏输入抖音链接")
         self.statusBar().setStyleSheet("background: #1a1a1a; color: #888;")
     
     def _setup_shortcuts(self):
@@ -234,9 +314,13 @@ class MainWindow(QMainWindow):
         shortcut = QShortcut(QKeySequence("Ctrl+D"), self)
         shortcut.activated.connect(self._on_download_clicked)
         
-        # Ctrl+Shift+D 也是下载
-        shortcut2 = QShortcut(QKeySequence("Ctrl+Shift+D"), self)
-        shortcut2.activated.connect(self._on_download_clicked)
+        # F5 刷新
+        refresh_shortcut = QShortcut(QKeySequence("F5"), self)
+        refresh_shortcut.activated.connect(self._refresh)
+        
+        # Alt+Home 主页
+        home_shortcut = QShortcut(QKeySequence("Alt+Home"), self)
+        home_shortcut.activated.connect(self._go_home)
     
     def _setup_tray(self):
         """设置系统托盘"""
@@ -261,12 +345,69 @@ class MainWindow(QMainWindow):
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             self.show()
     
+    # ========== 导航功能 ==========
+    def _go_back(self):
+        """后退"""
+        self.web_view.back()
+    
+    def _go_forward(self):
+        """前进"""
+        self.web_view.forward()
+    
+    def _refresh(self):
+        """刷新"""
+        self.web_view.reload()
+    
+    def _go_home(self):
+        """主页"""
+        self.web_view.load(QUrl("https://www.tiktok.com"))
+    
+    def _on_address_entered(self):
+        """地址栏回车"""
+        text = self.address_bar.text().strip()
+        if not text:
+            return
+        
+        # 自动补全协议
+        if not text.startswith(('http://', 'https://')):
+            text = 'https://' + text
+        
+        url = QUrl(text)
+        if url.isValid():
+            self.web_view.load(url)
+        else:
+            self.status_label.setText("无效的网址")
+    
+    def _on_url_changed(self, url):
+        """URL 改变时更新地址栏"""
+        self.address_bar.setText(url.toString())
+        self._update_nav_buttons()
+    
+    def _on_load_started(self):
+        """开始加载"""
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
+    
+    def _on_load_progress(self, progress):
+        """加载进度"""
+        self.progress_bar.setValue(progress)
+    
     def _on_load_finished(self, ok):
-        """页面加载完成后注入 JS"""
+        """页面加载完成后"""
+        self.progress_bar.setVisible(False)
         if ok:
             self._inject_js()
             self.status_label.setText("已就绪")
+        else:
+            self.status_label.setText("加载失败")
+        self._update_nav_buttons()
     
+    def _update_nav_buttons(self):
+        """更新前进/后退按钮状态"""
+        self.back_btn.setEnabled(self.web_view.history().canGoBack())
+        self.forward_btn.setEnabled(self.web_view.history().canGoForward())
+    
+    # ========== JS 注入 ==========
     def _inject_js(self):
         """注入下载检测 JS"""
         js_code = """
@@ -288,7 +429,7 @@ class MainWindow(QMainWindow):
                         const m = link.href.match(/@([^/]+)\/(video|photo)\/(\\d+)/);
                         if (m) return { author: m[1], videoId: m[3], type: m[2] };
                         const m2 = link.href.match(/\/(video|photo)\/(\\d+)/);
-                        if (m2) return { author: 'unknown', videoId: m2[2], type: m2[1] };
+                        if (m2) return { author: 'unknown', videoId: m[2], type: m2[1] };
                     }
                 }
                 return null;
@@ -370,6 +511,7 @@ class MainWindow(QMainWindow):
         elif message.startswith("__TTCOPY_ERR__:"):
             self.status_label.setText("无法识别当前内容")
     
+    # ========== 下载功能 ==========
     def _on_download_clicked(self):
         """点击下载按钮"""
         self.web_view.page().runJavaScript("window.__ttcopy_download && window.__ttcopy_download()")
@@ -389,6 +531,7 @@ class MainWindow(QMainWindow):
         # 禁用按钮，显示进度
         self.download_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
+        self.progress_bar.setMaximum(0)  # 无限模式表示下载中
         self.status_label.setText("下载中...")
         
         # 启动后台下载线程
@@ -403,6 +546,8 @@ class MainWindow(QMainWindow):
         """下载完成回调"""
         self.download_btn.setEnabled(True)
         self.progress_bar.setVisible(False)
+        self.progress_bar.setMaximum(100)
+        self.progress_bar.setValue(0)
         
         if success:
             self.status_label.setText(f"✓ {message}")
