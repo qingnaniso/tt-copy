@@ -144,22 +144,32 @@ class PlaywrightWorker(QThread):
             pass
     
     def _on_console(self, msg):
-        """处理 console 消息"""
+        """处理 console 消息 - Playwright ConsoleMessage"""
         try:
-            text = msg.text if hasattr(msg, 'text') else str(msg)
+            # Playwright ConsoleMessage 对象
+            text = msg.text
+            
+            # 记录所有 console 消息用于调试
+            if text.startswith('[TT-Copy]'):
+                self.log_message.emit(f"[Browser] {text}")
+            
             if text.startswith("__TTCOPY_DL__:"):
+                json_str = text[len("__TTCOPY_DL__:"):]
+                if json_str == " null - 无法识别内容":
+                    self.log_message.emit("浏览器: 无法识别当前内容")
+                    return
                 try:
-                    data = json.loads(text[len("__TTCOPY_DL__:"):])
+                    data = json.loads(json_str)
                     self.log_message.emit(f"下载请求: @{data.get('author')} - {data.get('type')}")
                     self.download_requested.emit(data)
                 except Exception as e:
-                    self.log_message.emit(f"解析下载请求失败: {e}")
+                    self.log_message.emit(f"解析下载请求失败: {e}, 内容: {json_str[:100]}")
             elif text.startswith("__TTCOPY_CURRENT__:"):
                 try:
                     data = json.loads(text[len("__TTCOPY_CURRENT__:"):])
                     self.page_info.emit(data)
-                except:
-                    pass
+                except Exception as e:
+                    self.log_message.emit(f"解析页面信息失败: {e}")
         except Exception as e:
             self.log_message.emit(f"Console 处理错误: {e}")
     
@@ -174,52 +184,149 @@ class PlaywrightWorker(QThread):
             delete Object.getPrototypeOf(navigator).webdriver;
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
             
+            // 从链接中提取视频信息
+            function extractFromLink(href) {
+                // 匹配 @user/video/123 或 @user/photo/123
+                let m = href.match(/@([^/]+)/(video|photo)/(\d+)/);
+                if (m) return { author: m[1], videoId: m[3], type: m[2] };
+                
+                // 匹配 /video/123 或 /photo/123
+                m = href.match(/\/(video|photo)\/(\d+)/);
+                if (m) return { author: 'unknown', videoId: m[2], type: m[1] };
+                
+                return null;
+            }
+            
             // 查找当前内容
             function getCurrentContent() {
+                // 策略1: 从 URL 路径提取
                 const pathMatch = location.pathname.match(/@([^/]+)/(video|photo)/(\d+)/);
                 if (pathMatch) {
                     return { author: pathMatch[1], videoId: pathMatch[3], type: pathMatch[2] };
                 }
                 
+                // 策略2: 从可见的视频元素向上查找
                 const videos = document.querySelectorAll('video');
                 for (const v of videos) {
                     const rect = v.getBoundingClientRect();
-                    if (rect.top >= -200 && rect.top < window.innerHeight * 0.7) {
+                    // 视频在可视区域内
+                    if (rect.top >= -100 && rect.top < window.innerHeight * 0.8 && rect.height > 100) {
+                        // 向上查找链接
                         let el = v;
-                        for (let i = 0; i < 20; i++) {
-                            if (!el.parentElement) break;
-                            el = el.parentElement;
+                        for (let i = 0; i < 25; i++) {
+                            if (!el) break;
+                            // 检查当前元素是否是链接
+                            if (el.tagName === 'A') {
+                                const info = extractFromLink(el.href);
+                                if (info) return info;
+                            }
+                            // 在当前层级查找链接
                             const link = el.querySelector('a[href*="/video/"], a[href*="/photo/"]');
                             if (link) {
-                                const m = link.href.match(/@([^/]+)/(video|photo)/(\d+)/);
-                                if (m) return { author: m[1], videoId: m[3], type: m[2] };
+                                const info = extractFromLink(link.href);
+                                if (info) return info;
                             }
+                            el = el.parentElement;
                         }
                     }
                 }
+                
+                // 策略3: 查找所有包含视频/照片链接的元素，找在视口内的
+                const allLinks = document.querySelectorAll('a[href*="/video/"], a[href*="/photo/"]');
+                let bestLink = null;
+                let bestScore = -1;
+                
+                for (const link of allLinks) {
+                    const rect = link.getBoundingClientRect();
+                    // 计算在视口中心的位置得分
+                    const centerY = rect.top + rect.height / 2;
+                    const viewportCenter = window.innerHeight / 2;
+                    const distance = Math.abs(centerY - viewportCenter);
+                    
+                    // 只在视口内且距离中心较近的
+                    if (rect.top >= -100 && rect.bottom <= window.innerHeight + 100 && rect.height > 50) {
+                        const score = 1000 - distance;
+                        if (score > bestScore) {
+                            bestScore = score;
+                            bestLink = link;
+                        }
+                    }
+                }
+                
+                if (bestLink) {
+                    const info = extractFromLink(bestLink.href);
+                    if (info) return info;
+                }
+                
                 return null;
             }
             
             // 定期报告当前内容
             let lastVideoId = null;
-            setInterval(() => {
-                const info = getCurrentContent();
-                if (info && info.videoId !== lastVideoId) {
-                    lastVideoId = info.videoId;
-                    console.log('__TTCOPY_CURRENT__:' + JSON.stringify(info));
+            let checkInterval = setInterval(() => {
+                try {
+                    const info = getCurrentContent();
+                    if (info && info.videoId !== lastVideoId) {
+                        lastVideoId = info.videoId;
+                        console.log('__TTCOPY_CURRENT__:' + JSON.stringify(info));
+                    }
+                } catch (e) {
+                    console.log('[TT-Copy] Error in checkInterval:', e.message);
                 }
             }, 500);
             
             // 下载函数
             window.__ttcopy_download = function() {
-                const info = getCurrentContent();
-                if (info) {
-                    console.log('__TTCOPY_DL__:' + JSON.stringify(info));
-                    return true;
+                try {
+                    const info = getCurrentContent();
+                    if (info && info.videoId) {
+                        console.log('__TTCOPY_DL__:' + JSON.stringify(info));
+                        return true;
+                    }
+                    console.log('__TTCOPY_DL__: null - 无法识别内容');
+                    return false;
+                } catch (e) {
+                    console.log('__TTCOPY_DL__: error - ' + e.message);
+                    return false;
                 }
-                console.log('__TTCOPY_DL__: null - 无法识别内容');
-                return false;
             };
+            
+            // 页面上可见的下载按钮（可选）
+            function addFloatingButton() {
+                if (document.getElementById('__ttcopy_btn__')) return;
+                
+                const btn = document.createElement('div');
+                btn.id = '__ttcopy_btn__';
+                btn.innerHTML = '⬇';
+                btn.style.cssText = `
+                    position: fixed;
+                    bottom: 80px;
+                    right: 20px;
+                    width: 50px;
+                    height: 50px;
+                    background: #25c554;
+                    color: white;
+                    border-radius: 50%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: 24px;
+                    cursor: pointer;
+                    z-index: 99999;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                    transition: transform 0.2s;
+                `;
+                btn.onclick = function() {
+                    window.__ttcopy_download();
+                    btn.style.transform = 'scale(0.9)';
+                    setTimeout(() => btn.style.transform = 'scale(1)', 200);
+                };
+                document.body.appendChild(btn);
+                console.log('[TT-Copy] Floating button added');
+            }
+            
+            // 延迟添加按钮，确保页面加载完成
+            setTimeout(addFloatingButton, 2000);
             
             console.log('[TT-Copy] Injected successfully');
         })();
