@@ -687,9 +687,8 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    # 设置 Qt 属性以支持视频播放
-    QApplication.setAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling, True)
-    QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
+    # PyQt6 默认启用高 DPI 支持，无需手动设置
+    # Qt 6 已经内置了高 DPI 支持，AA_EnableHighDpiScaling 已被移除
     
     app = QApplication(sys.argv)
     app.setApplicationName("TT-Copy Desktop")
