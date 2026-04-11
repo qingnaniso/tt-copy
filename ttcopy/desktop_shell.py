@@ -145,19 +145,23 @@ class PlaywrightWorker(QThread):
     
     def _on_console(self, msg):
         """处理 console 消息"""
-        text = msg.text
-        if text.startswith("__TTCOPY_DL__:"):
-            try:
-                data = json.loads(text[len("__TTCOPY_DL__:"):])
-                self.download_requested.emit(data)
-            except:
-                pass
-        elif text.startswith("__TTCOPY_CURRENT__:"):
-            try:
-                data = json.loads(text[len("__TTCOPY_CURRENT__:"):])
-                self.page_info.emit(data)
-            except:
-                pass
+        try:
+            text = msg.text if hasattr(msg, 'text') else str(msg)
+            if text.startswith("__TTCOPY_DL__:"):
+                try:
+                    data = json.loads(text[len("__TTCOPY_DL__:"):])
+                    self.log_message.emit(f"下载请求: @{data.get('author')} - {data.get('type')}")
+                    self.download_requested.emit(data)
+                except Exception as e:
+                    self.log_message.emit(f"解析下载请求失败: {e}")
+            elif text.startswith("__TTCOPY_CURRENT__:"):
+                try:
+                    data = json.loads(text[len("__TTCOPY_CURRENT__:"):])
+                    self.page_info.emit(data)
+                except:
+                    pass
+        except Exception as e:
+            self.log_message.emit(f"Console 处理错误: {e}")
     
     def _get_inject_js(self):
         """注入的 JS 代码"""
@@ -213,17 +217,20 @@ class PlaywrightWorker(QThread):
                     console.log('__TTCOPY_DL__:' + JSON.stringify(info));
                     return true;
                 }
+                console.log('__TTCOPY_DL__: null - 无法识别内容');
                 return false;
             };
             
-            console.log('[TT-Copy] Injected');
+            console.log('[TT-Copy] Injected successfully');
         })();
         """
     
     async def download_current(self):
         """触发下载当前视频"""
         if self.page:
-            await self.page.evaluate("window.__ttcopy_download && window.__ttcopy_download()")
+            result = await self.page.evaluate("window.__ttcopy_download && window.__ttcopy_download()")
+            return result
+        return False
     
     async def navigate(self, url):
         """导航到指定 URL"""
@@ -279,8 +286,9 @@ class PlaywrightWorker(QThread):
 
 
 class DownloadWorker(QThread):
-    """下载线程"""
-    progress = pyqtSignal(str)
+    """下载线程 - 支持进度回调"""
+    progress = pyqtSignal(str)  # 进度文本
+    progress_percent = pyqtSignal(int)  # 进度百分比 0-100
     finished_with_result = pyqtSignal(bool, str)
     
     def __init__(self, downloader, video_url, author, video_id, content_type, cookies_file=None):
@@ -298,13 +306,145 @@ class DownloadWorker(QThread):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
+            self.progress.emit("准备下载...")
+            self.progress_percent.emit(10)
+            
+            # 使用 yt-dlp 下载
+            from yt_dlp import YoutubeDL
+            
+            import re
+            safe_author = re.sub(r'[^\w\-.]', '_', self.author or "unknown")
+            filename = f"{safe_author}_{self.video_id}_{int(time.time())}"
+            
+            download_dir = Path(self.downloader.config["download_dir"])
+            download_dir.mkdir(parents=True, exist_ok=True)
+            
+            output_template = str(download_dir / f"{filename}.%(ext)s")
+            
+            opts = {
+                'format': 'best',
+                'outtmpl': output_template,
+                'quiet': True,
+                'no_warnings': True,
+                'noplaylist': True,
+                'socket_timeout': 30,
+                'http_headers': {
+                    'User-Agent': self.downloader.config.get('user_agent', ''),
+                    'Referer': 'https://www.tiktok.com/',
+                },
+                'progress_hooks': [self._progress_hook],
+                'cookiefile': self.cookies_file,
+            }
+            
             self.progress.emit("下载中...")
-            filepath = loop.run_until_complete(
-                self.downloader.download(self.video_url, self.author, self.video_id, self.cookies_file)
-            )
-            self.finished_with_result.emit(True, f"已保存: {filepath}")
+            self.progress_percent.emit(30)
+            
+            with YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(self.video_url, download=True)
+                downloaded_file = ydl.prepare_filename(info)
+                
+                # 检查实际下载的文件（可能有不同扩展名）
+                actual_file = None
+                for ext in ['.mp4', '.webm', '.mkv', '.mov']:
+                    test_file = output_template.replace('.%(ext)s', ext)
+                    if Path(test_file).exists():
+                        actual_file = test_file
+                        break
+                
+                if not actual_file:
+                    actual_file = downloaded_file
+                
+                self.progress_percent.emit(100)
+                self.finished_with_result.emit(True, actual_file)
+                
         except Exception as e:
+            self.progress_percent.emit(0)
             self.finished_with_result.emit(False, str(e)[:200])
+    
+    def _progress_hook(self, d):
+        """yt-dlp 进度回调"""
+        if d['status'] == 'downloading':
+            try:
+                percent = d.get('percent', 0)
+                if percent:
+                    # 映射到 30-90% 区间
+                    mapped = 30 + int(percent * 0.6)
+                    self.progress_percent.emit(mapped)
+                    speed = d.get('speed', 0)
+                    if speed:
+                        self.progress.emit(f"下载中... {percent:.1f}% ({speed/1024/1024:.1f} MB/s)")
+                    else:
+                        self.progress.emit(f"下载中... {percent:.1f}%")
+            except:
+                pass
+        elif d['status'] == 'finished':
+            self.progress_percent.emit(90)
+            self.progress.emit("处理中...")
+
+
+class ToastWidget(QWidget):
+    """自定义 Toast 提示"""
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 15, 20, 15)
+        
+        self.label = QLabel()
+        self.label.setStyleSheet("""
+            QLabel {
+                color: white;
+                font-size: 14px;
+                font-weight: bold;
+                padding: 15px 25px;
+                background: rgba(37, 197, 84, 0.95);
+                border-radius: 8px;
+            }
+        """)
+        layout.addWidget(self.label)
+        
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.hide)
+    
+    def show_message(self, message, duration=3000, success=True):
+        """显示 toast 消息"""
+        self.label.setText(message)
+        if not success:
+            self.label.setStyleSheet("""
+                QLabel {
+                    color: white;
+                    font-size: 14px;
+                    font-weight: bold;
+                    padding: 15px 25px;
+                    background: rgba(244, 67, 54, 0.95);
+                    border-radius: 8px;
+                }
+            """)
+        else:
+            self.label.setStyleSheet("""
+                QLabel {
+                    color: white;
+                    font-size: 14px;
+                    font-weight: bold;
+                    padding: 15px 25px;
+                    background: rgba(37, 197, 84, 0.95);
+                    border-radius: 8px;
+                }
+            """)
+        
+        self.adjustSize()
+        
+        # 定位到屏幕中央上方
+        if self.parent():
+            parent_rect = self.parent().geometry()
+            x = parent_rect.x() + (parent_rect.width() - self.width()) // 2
+            y = parent_rect.y() + 80
+            self.move(x, y)
+        
+        self.show()
+        self.timer.start(duration)
 
 
 class MainWindow(QMainWindow):
@@ -323,6 +463,9 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self._setup_shortcuts()
         self._setup_tray()
+        
+        # Toast 提示
+        self.toast = ToastWidget(self)
         
         # 启动 Playwright
         self._start_playwright()
@@ -392,12 +535,13 @@ class MainWindow(QMainWindow):
             QProgressBar {
                 border: none;
                 background: #333;
-                height: 4px;
-                border-radius: 2px;
+                height: 6px;
+                border-radius: 3px;
+                text-align: center;
             }
             QProgressBar::chunk {
                 background: #25c554;
-                border-radius: 2px;
+                border-radius: 3px;
             }
         """)
         
@@ -442,6 +586,8 @@ class MainWindow(QMainWindow):
         # 进度条
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFormat("%p%")
         layout.addWidget(self.progress_bar)
         
         layout.addSpacing(10)
@@ -550,14 +696,10 @@ class MainWindow(QMainWindow):
         if ready:
             self.status_label.setText("浏览器已就绪")
             self.download_btn.setEnabled(True)
-            self.tray_icon.showMessage(
-                "TT-Copy", 
-                "浏览器已启动，可以开始浏览和下载了",
-                QSystemTrayIcon.MessageIcon.Information,
-                3000
-            )
+            self.toast.show_message("浏览器已启动，可以开始浏览了！")
         else:
             self.status_label.setText("浏览器启动失败")
+            self.toast.show_message("浏览器启动失败", success=False)
     
     def _on_page_info(self, info):
         """页面信息更新"""
@@ -574,11 +716,24 @@ class MainWindow(QMainWindow):
     
     def _on_download(self):
         """触发下载"""
+        self.log_message.emit("点击下载按钮...")
         if self.playwright_worker and self.playwright_worker.loop:
-            asyncio.run_coroutine_threadsafe(
+            future = asyncio.run_coroutine_threadsafe(
                 self.playwright_worker.download_current(),
                 self.playwright_worker.loop
             )
+            try:
+                result = future.result(timeout=3)
+                if result:
+                    self.log_message.emit("下载请求已发送")
+                else:
+                    self.log_message.emit("无法识别当前内容")
+                    self.toast.show_message("无法识别当前内容，请先播放视频", success=False)
+            except Exception as e:
+                self.log_message.emit(f"下载触发失败: {e}")
+        else:
+            self.log_message.emit("Playwright 未就绪")
+            self.toast.show_message("请等待浏览器启动完成", success=False)
     
     def _on_download_requested(self, data):
         """处理下载请求"""
@@ -586,11 +741,16 @@ class MainWindow(QMainWindow):
         video_id = data.get("videoId")
         content_type = data.get("type", "video")
         
+        self.log_message.emit(f"收到下载请求: @{author} - {video_id}")
+        
         if not video_id:
-            QMessageBox.warning(self, "下载失败", "无法获取视频 ID")
+            self.toast.show_message("无法获取视频 ID", success=False)
             return
         
         content_url = f"https://www.tiktok.com/@{author}/{content_type}/{video_id}"
+        
+        # 显示开始下载 toast
+        self.toast.show_message(f"开始下载: @{author}")
         
         # 导出 cookies
         cookies_file = None
@@ -604,15 +764,17 @@ class MainWindow(QMainWindow):
             except:
                 pass
         
-        # 禁用按钮
+        # 禁用按钮，显示进度条
         self.download_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
         
         # 启动下载线程
         self.download_worker = DownloadWorker(
             self.downloader, content_url, author, video_id, content_type, cookies_file
         )
         self.download_worker.progress.connect(self.status_label.setText)
+        self.download_worker.progress_percent.connect(self.progress_bar.setValue)
         self.download_worker.finished_with_result.connect(self._on_download_finished)
         self.download_worker.start()
     
@@ -622,10 +784,14 @@ class MainWindow(QMainWindow):
         self.progress_bar.setVisible(False)
         
         if success:
-            self.status_label.setText(f"✓ {message}")
-            self.tray_icon.showMessage("下载完成", message, QSystemTrayIcon.MessageIcon.Information, 3000)
+            self.status_label.setText(f"✓ 下载完成")
+            self.log_message.emit(f"下载成功: {message}")
+            self.toast.show_message(f"下载完成！")
+            self.tray_icon.showMessage("TT-Copy", "视频下载完成！", QSystemTrayIcon.MessageIcon.Information, 3000)
         else:
-            self.status_label.setText(f"✗ {message}")
+            self.status_label.setText(f"✗ 下载失败")
+            self.log_message.emit(f"下载失败: {message}")
+            self.toast.show_message(f"下载失败: {message}", success=False)
     
     def _on_back(self):
         """后退"""
@@ -673,6 +839,7 @@ class MainWindow(QMainWindow):
             self.config["download_dir"] = folder
             self.downloader = VideoDownloader(self.config)
             self.status_label.setText(f"下载目录: {folder}")
+            self.toast.show_message(f"下载目录已更改")
     
     def _on_quit(self):
         """退出"""
