@@ -2,6 +2,8 @@
 
 TikTok 网页版一键下载工具。刷视频时点一下就能保存到本地，支持视频和图文帖。
 
+> **桌面版已上线** — 浏览器嵌入独立窗口，滑动时自动识别，随时下载。见下方 [桌面版](#桌面版) 说明。
+
 ## 功能
 
 - 浏览器内一键下载当前播放的视频/图文
@@ -66,22 +68,52 @@ python -m ttcopy.main --output ~/Videos/tiktok
 
 文件名格式：`作者_视频ID_时间戳.mp4`（图文帖为 `.jpg`）
 
+## 桌面版
+
+**`start_desktop.command` / `start_desktop.bat`** — 浏览器嵌入独立窗口，体验更完整。
+
+**桌面版特点：**
+- 浏览器在独立窗口内运行，不是弹出式浏览器
+- 滑动时自动识别当前视频/图文
+- 顶部工具栏显示当前内容作者
+- Ctrl+D 快捷键下载
+- 系统托盘驻留，关闭窗口不退出
+- 下载进度实时显示
+
+**Mac 启动桌面版：**
+```bash
+double-click start_desktop.command
+# 或命令行
+python -m ttcopy.desktop
+```
+
+**Windows 启动桌面版：**
+```bash
+double-click start_desktop.bat
+```
+
+---
+
 ## 项目结构
 
 ```
 tt-copy/
-├── start.command        # Mac 一键启动脚本
-├── start.bat            # Windows 一键启动脚本
-├── _run.py              # Windows 嵌入式 Python 启动入口
-├── requirements.txt     # Python 依赖
+├── start.command           # Mac 浏览器版启动脚本
+├── start.bat               # Windows 浏览器版启动脚本
+├── start_desktop.command   # Mac 桌面版启动脚本
+├── start_desktop.bat       # Windows 桌面版启动脚本
+├── _run.py                 # Windows 嵌入式 Python 启动入口
+├── _run_desktop.py         # Windows 桌面版启动入口
+├── requirements.txt        # Python 依赖
 ├── ttcopy/
 │   ├── __init__.py
-│   ├── main.py          # 主入口：启动浏览器、注入 JS、事件循环
-│   ├── interceptor.py   # 网络请求拦截，捕获图片 URL
-│   ├── downloader.py    # 视频/图片下载（yt-dlp + 直接下载）
-│   └── config.py        # 配置（下载目录、UA 等）
-├── downloads/           # 默认下载目录
-├── DESIGN.md            # 技术设计文档
+│   ├── main.py             # 浏览器版主入口
+│   ├── desktop.py          # 桌面版主窗口
+│   ├── interceptor.py      # 网络请求拦截
+│   ├── downloader.py       # 视频/图片下载
+│   └── config.py           # 配置
+├── downloads/              # 默认下载目录
+├── DESIGN.md               # 技术设计文档
 └── README.md
 ```
 

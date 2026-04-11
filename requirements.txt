@@ -1,2 +1,4 @@
 playwright>=1.40.0
 yt-dlp>=2025.1.0
+PyQt6>=6.6.0
+PyQt6-WebEngine>=6.6.0
