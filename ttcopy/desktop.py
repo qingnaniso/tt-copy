@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QFileDialog, QMessageBox, QLineEdit
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
+from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings, QWebEngineScript, QWebEngineUrlRequestInterceptor, QWebEngineUrlRequestInfo
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal, QObject, QThread, QSize
 from PyQt6.QtGui import QIcon, QAction, QKeySequence, QShortcut
 
@@ -84,6 +84,15 @@ class WebBridge(QObject):
             pass
 
 
+class RequestInterceptor(QWebEngineUrlRequestInterceptor):
+    """请求拦截器"""
+    def interceptRequest(self, info: QWebEngineUrlRequestInfo):
+        # Keep language preference, but don't force document/navigation
+        # headers onto every resource request. Media/XHR/script requests need
+        # their native fetch metadata or TikTok playback can fail.
+        info.setHttpHeader(b"Accept-Language", b"zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7")
+
+
 class TikTokWebPage(QWebEnginePage):
     """自定义 WebPage 拦截 console 消息和处理导航"""
     console_message = pyqtSignal(str)
@@ -92,29 +101,6 @@ class TikTokWebPage(QWebEnginePage):
         super().__init__(profile, parent)
         self.bridge = WebBridge(self)
         self.profile = profile
-        
-        # 安装 URL 请求拦截器
-        profile.setUrlRequestInterceptor(self._create_interceptor())
-    
-    def _create_interceptor(self):
-        """创建请求拦截器来修改请求头"""
-        from PyQt6.QtWebEngineCore import QWebEngineUrlRequestInterceptor, QWebEngineUrlRequestInfo
-        
-        class Interceptor(QWebEngineUrlRequestInterceptor):
-            def interceptRequest(self, info: QWebEngineUrlRequestInfo):
-                # 添加 Accept-Language 头
-                info.setHttpHeader(b"Accept-Language", b"zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7")
-                # 添加 Accept 头
-                info.setHttpHeader(b"Accept", b"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
-                # 添加 Sec-Fetch 头
-                info.setHttpHeader(b"Sec-Fetch-Dest", b"document")
-                info.setHttpHeader(b"Sec-Fetch-Mode", b"navigate")
-                info.setHttpHeader(b"Sec-Fetch-Site", b"none")
-                info.setHttpHeader(b"Sec-Fetch-User", b"?1")
-                # 升级 insecure requests
-                info.setHttpHeader(b"Upgrade-Insecure-Requests", b"1")
-        
-        return Interceptor()
     
     def javaScriptConsoleMessage(self, level, message, lineNumber, sourceID):
         """拦截 console.log"""
@@ -329,6 +315,13 @@ class MainWindow(QMainWindow):
         profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.DiskHttpCache)
         profile.setHttpCacheMaximumSize(100 * 1024 * 1024)  # 100MB
         
+        # 安装请求拦截器
+        self.interceptor = RequestInterceptor()
+        profile.setUrlRequestInterceptor(self.interceptor)
+        
+        # 添加反检测脚本（在文档创建时注入）
+        self._inject_anti_detection_script(profile)
+        
         self.web_page = TikTokWebPage(profile, self)
         self.web_page.bridge.download_requested.connect(self._on_download_requested)
         self.web_page.console_message.connect(self._on_console_message)
@@ -345,6 +338,205 @@ class MainWindow(QMainWindow):
         settings.setAttribute(QWebEngineSettings.WebAttribute.DnsPrefetchEnabled, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.FocusOnNavigationEnabled, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.ShowScrollBars, True)
+    
+    def _inject_anti_detection_script(self, profile):
+        """在文档创建时注入反检测脚本"""
+        script = QWebEngineScript()
+        script.setName("anti_detection")
+        script.setSourceCode(self._get_anti_detection_js())
+        script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+        script.setRunsOnSubFrames(True)
+        script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+        profile.scripts().insert(script)
+    
+    def _get_anti_detection_js(self):
+        """获取反检测 JavaScript 代码"""
+        return """
+        (function() {
+            'use strict';
+            
+            // 防止重复注入
+            if (window.__anti_detect_injected__) return;
+            window.__anti_detect_injected__ = true;
+            
+            // 1. 删除 webdriver 属性
+            delete Object.getPrototypeOf(navigator).webdriver;
+            Object.defineProperty(navigator, 'webdriver', {
+                get: function() { return undefined; },
+                configurable: true,
+                enumerable: true
+            });
+            
+            // 2. 模拟真实 Chrome 插件
+            const createFakePlugins = function() {
+                const plugins = [
+                    {
+                        name: "Chrome PDF Plugin",
+                        filename: "internal-pdf-viewer",
+                        description: "Portable Document Format",
+                        version: undefined,
+                        length: 2,
+                        item: function() { return this[0]; },
+                        namedItem: function() { return this[0]; }
+                    },
+                    {
+                        name: "Chrome PDF Viewer",
+                        filename: "mhjfbmdgcfjbbpaeojofohoefgiehjai",
+                        description: "Portable Document Format plugin",
+                        version: undefined,
+                        length: 2,
+                        item: function() { return this[0]; },
+                        namedItem: function() { return this[0]; }
+                    },
+                    {
+                        name: "Native Client",
+                        filename: "internal-nacl-plugin",
+                        description: "Native Client module",
+                        version: undefined,
+                        length: 2,
+                        item: function() { return this[0]; },
+                        namedItem: function() { return this[0]; }
+                    }
+                ];
+                plugins.length = 3;
+                plugins.item = function(index) { return this[index]; };
+                plugins.namedItem = function(name) {
+                    for (let i = 0; i < this.length; i++) {
+                        if (this[i].name === name) return this[i];
+                    }
+                    return null;
+                };
+                return plugins;
+            };
+            
+            Object.defineProperty(navigator, 'plugins', {
+                get: createFakePlugins,
+                configurable: true,
+                enumerable: true
+            });
+            
+            // 3. mimeTypes
+            const createFakeMimeTypes = function() {
+                const mimeTypes = [
+                    { type: "application/pdf", suffixes: "pdf", description: "Portable Document Format", enabledPlugin: {} },
+                    { type: "application/x-google-chrome-pdf", suffixes: "pdf", description: "Portable Document Format", enabledPlugin: {} },
+                    { type: "application/x-nacl", suffixes: "", description: "Native Client executable", enabledPlugin: {} }
+                ];
+                mimeTypes.length = 3;
+                mimeTypes.item = function(index) { return this[index]; };
+                mimeTypes.namedItem = function(name) {
+                    for (let i = 0; i < this.length; i++) {
+                        if (this[i].type === name) return this[i];
+                    }
+                    return null;
+                };
+                return mimeTypes;
+            };
+            
+            Object.defineProperty(navigator, 'mimeTypes', {
+                get: createFakeMimeTypes,
+                configurable: true,
+                enumerable: true
+            });
+            
+            // 4. 语言设置
+            Object.defineProperty(navigator, 'languages', {
+                get: function() { return ['zh-CN', 'zh', 'en-US', 'en']; },
+                configurable: true,
+                enumerable: true
+            });
+            
+            // 5. 覆盖 permissions.query
+            const originalQuery = navigator.permissions.query;
+            navigator.permissions.query = function(parameters) {
+                if (parameters.name === 'notifications' || 
+                    parameters.name === 'clipboard-read' || 
+                    parameters.name === 'clipboard-write' ||
+                    parameters.name === 'accelerometer' ||
+                    parameters.name === 'gyroscope' ||
+                    parameters.name === 'magnetometer' ||
+                    parameters.name === 'payment-handler') {
+                    return Promise.resolve({ state: 'prompt', onchange: null });
+                }
+                return originalQuery.call(navigator.permissions, parameters);
+            };
+            
+            // 6. 覆盖 chrome 对象
+            window.chrome = window.chrome || {};
+            window.chrome.runtime = window.chrome.runtime || {};
+            window.chrome.runtime.OnInstalledReason = { CHROME_UPDATE: "chrome_update", INSTALL: "install", SHARED_MODULE_UPDATE: "shared_module_update", UPDATE: "update" };
+            window.chrome.runtime.OnRestartRequiredReason = { APP_UPDATE: "app_update", OS_UPDATE: "os_update", PERIODIC: "periodic" };
+            window.chrome.runtime.PlatformArch = { ARM: "arm", ARM64: "arm64", MIPS: "mips", MIPS64: "mips64", X86_32: "x86-32", X86_64: "x86-64" };
+            window.chrome.runtime.PlatformNaclArch = { ARM: "arm", MIPS: "mips", MIPS64: "mips64", MIPS64EL: "mips64el", MIPSEL: "mipsel", X86_32: "x86-32", X86_64: "x86-64" };
+            window.chrome.runtime.PlatformOs = { ANDROID: "android", CROS: "cros", LINUX: "linux", MAC: "mac", OPENBSD: "openbsd", WIN: "win" };
+            window.chrome.runtime.RequestUpdateCheckStatus = { NO_UPDATE: "no_update", THROTTLED: "throttled", UPDATE_AVAILABLE: "update_available" };
+            
+            // 7. Notification 权限
+            if (window.Notification) {
+                Object.defineProperty(Notification, 'permission', {
+                    get: function() { return 'default'; },
+                    configurable: true
+                });
+            }
+            
+            // 8. WebGL 指纹保护
+            const getParameter = WebGLRenderingContext.prototype.getParameter;
+            WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                const params = {
+                    37445: 'Intel Inc.',           // UNMASKED_VENDOR_WEBGL
+                    37446: 'Intel Iris OpenGL Engine',  // UNMASKED_RENDERER_WEBGL
+                    7936: 'Intel Iris OpenGL Engine',   // RENDERER
+                    7937: 'Intel Inc.'                   // VENDOR
+                };
+                if (params[parameter] !== undefined) {
+                    return params[parameter];
+                }
+                return getParameter.call(this, parameter);
+            };
+            
+            // 9. Canvas 指纹保护（轻微噪声）
+            const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+            const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+            
+            // 10. 覆盖 toString 防止检测
+            const originalToString = Function.prototype.toString;
+            Function.prototype.toString = function() {
+                if (this === navigator.permissions.query) {
+                    return 'function query() { [native code] }';
+                }
+                if (this === WebGLRenderingContext.prototype.getParameter) {
+                    return 'function getParameter() { [native code] }';
+                }
+                return originalToString.call(this);
+            };
+            
+            // 11. 阻止检测新窗口
+            window.open = function(url, target, features) {
+                if (url && url.includes('tiktok')) {
+                    window.location.href = url;
+                    return window;
+                }
+                return null;
+            };
+            
+            // 12. 覆盖 console.debug (某些检测使用)
+            const originalDebug = console.debug;
+            console.debug = function() {};
+            
+            // 13. 阻止外部脚本检测 automation
+            Object.defineProperty(window, 'cdc_adoQpoasnfa76pfcZLmcfl_Array', {
+                get: function() { return undefined; }
+            });
+            Object.defineProperty(window, 'cdc_adoQpoasnfa76pfcZLmcfl_Promise', {
+                get: function() { return undefined; }
+            });
+            Object.defineProperty(window, 'cdc_adoQpoasnfa76pfcZLmcfl_Symbol', {
+                get: function() { return undefined; }
+            });
+            
+            console.log('[Anti-Detect] Injected at DocumentCreation');
+        })();
+        """
         
         self.web_view = QWebEngineView()
         self.web_view.setPage(self.web_page)
