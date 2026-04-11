@@ -288,9 +288,23 @@ class MainWindow(QMainWindow):
         profile = QWebEngineProfile("ttcopy_profile", self)
         profile.setHttpUserAgent(self.config.get("user_agent"))
         
+        # 启用持久化存储，避免每次启动都重新登录
+        profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
+        
         self.web_page = TikTokWebPage(profile, self)
         self.web_page.bridge.download_requested.connect(self._on_download_requested)
         self.web_page.console_message.connect(self._on_console_message)
+        
+        # 配置浏览器设置 - 启用视频播放所需功能
+        settings = self.web_page.settings()
+        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanOpenWindows, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.DnsPrefetchEnabled, True)
         
         self.web_view = QWebEngineView()
         self.web_view.setPage(self.web_page)
@@ -409,11 +423,32 @@ class MainWindow(QMainWindow):
     
     # ========== JS 注入 ==========
     def _inject_js(self):
-        """注入下载检测 JS"""
-        js_code = """
+        """注入反检测和下载检测 JS"""
+        js_code = r"""
         (function() {
             if (window.__ttcopy_injected__) return;
             window.__ttcopy_injected__ = true;
+            
+            // ========== 反检测：隐藏自动化特征 ==========
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+            
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => [1, 2, 3, 4, 5]
+            });
+            
+            Object.defineProperty(navigator, 'languages', {
+                get: () => ['zh-CN', 'zh', 'en-US', 'en']
+            });
+            
+            // 覆盖 permissions.query 避免检测
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (parameters) => (
+                parameters.name === 'notifications' ?
+                    Promise.resolve({ state: Notification.permission }) :
+                    originalQuery(parameters)
+            );
             
             // 监听滚动，自动识别当前内容
             let lastVideoId = null;
@@ -426,9 +461,9 @@ class MainWindow(QMainWindow):
                     el = el.parentElement;
                     const link = el.querySelector('a[href*="/video/"], a[href*="/photo/"]');
                     if (link) {
-                        const m = link.href.match(/@([^/]+)\/(video|photo)\/(\\d+)/);
+                        const m = link.href.match(/@([^/]+)\/(video|photo)\/(\d+)/);
                         if (m) return { author: m[1], videoId: m[3], type: m[2] };
-                        const m2 = link.href.match(/\/(video|photo)\/(\\d+)/);
+                        const m2 = link.href.match(/\/(video|photo)\/(\d+)/);
                         if (m2) return { author: 'unknown', videoId: m[2], type: m2[1] };
                     }
                 }
@@ -437,7 +472,7 @@ class MainWindow(QMainWindow):
             
             function getCurrentContentInfo() {
                 // Strategy 1: URL path
-                const pathMatch = location.pathname.match(/@([^/]+)\/(video|photo)\/(\\d+)/);
+                const pathMatch = location.pathname.match(/@([^/]+)\/(video|photo)\/(\d+)/);
                 if (pathMatch) {
                     return { author: pathMatch[1], videoId: pathMatch[3], type: pathMatch[2] };
                 }
@@ -455,7 +490,7 @@ class MainWindow(QMainWindow):
                 // Strategy 3: Find visible photo
                 const links = document.querySelectorAll('a[href*="/photo/"]');
                 for (const link of links) {
-                    const m = link.href.match(/@([^/]+)\/photo\/(\\d+)/);
+                    const m = link.href.match(/@([^/]+)\/photo\/(\d+)/);
                     if (!m) continue;
                     const rect = link.getBoundingClientRect();
                     if (rect.top >= -200 && rect.top < window.innerHeight * 0.7 && rect.width > 100) {
