@@ -85,13 +85,36 @@ class WebBridge(QObject):
 
 
 class TikTokWebPage(QWebEnginePage):
-    """自定义 WebPage 拦截 console 消息"""
+    """自定义 WebPage 拦截 console 消息和处理导航"""
     console_message = pyqtSignal(str)
     
     def __init__(self, profile, parent=None):
         super().__init__(profile, parent)
         self.bridge = WebBridge(self)
         self.profile = profile
+        
+        # 安装 URL 请求拦截器
+        profile.setUrlRequestInterceptor(self._create_interceptor())
+    
+    def _create_interceptor(self):
+        """创建请求拦截器来修改请求头"""
+        from PyQt6.QtWebEngineCore import QWebEngineUrlRequestInterceptor, QWebEngineUrlRequestInfo
+        
+        class Interceptor(QWebEngineUrlRequestInterceptor):
+            def interceptRequest(self, info: QWebEngineUrlRequestInfo):
+                # 添加 Accept-Language 头
+                info.setHttpHeader(b"Accept-Language", b"zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7")
+                # 添加 Accept 头
+                info.setHttpHeader(b"Accept", b"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
+                # 添加 Sec-Fetch 头
+                info.setHttpHeader(b"Sec-Fetch-Dest", b"document")
+                info.setHttpHeader(b"Sec-Fetch-Mode", b"navigate")
+                info.setHttpHeader(b"Sec-Fetch-Site", b"none")
+                info.setHttpHeader(b"Sec-Fetch-User", b"?1")
+                # 升级 insecure requests
+                info.setHttpHeader(b"Upgrade-Insecure-Requests", b"1")
+        
+        return Interceptor()
     
     def javaScriptConsoleMessage(self, level, message, lineNumber, sourceID):
         """拦截 console.log"""
@@ -104,6 +127,14 @@ class TikTokWebPage(QWebEnginePage):
                 self.bridge.download_requested.emit(data)
             except:
                 pass
+    
+    def acceptNavigationRequest(self, url, type, isMainFrame):
+        """接受所有导航请求"""
+        return True
+    
+    def certificateError(self, certificateError):
+        """忽略证书错误"""
+        return True
 
 
 class MainWindow(QMainWindow):
@@ -286,10 +317,17 @@ class MainWindow(QMainWindow):
         
         # ========== 浏览器视图 ==========
         profile = QWebEngineProfile("ttcopy_profile", self)
-        profile.setHttpUserAgent(self.config.get("user_agent"))
+        
+        # 使用 Chrome 的 User-Agent（QtWebEngine 基于 Chromium）
+        chrome_ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        profile.setHttpUserAgent(chrome_ua)
         
         # 启用持久化存储，避免每次启动都重新登录
         profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
+        
+        # 启用 HTTP 缓存
+        profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.DiskHttpCache)
+        profile.setHttpCacheMaximumSize(100 * 1024 * 1024)  # 100MB
         
         self.web_page = TikTokWebPage(profile, self)
         self.web_page.bridge.download_requested.connect(self._on_download_requested)
@@ -305,6 +343,8 @@ class MainWindow(QMainWindow):
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.DnsPrefetchEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.FocusOnNavigationEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.ShowScrollBars, True)
         
         self.web_view = QWebEngineView()
         self.web_view.setPage(self.web_page)
@@ -430,27 +470,73 @@ class MainWindow(QMainWindow):
             window.__ttcopy_injected__ = true;
             
             // ========== 反检测：隐藏自动化特征 ==========
+            
+            // 1. 删除 webdriver 属性
+            delete Object.getPrototypeOf(navigator).webdriver;
             Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined
+                get: () => undefined,
+                configurable: true
             });
             
+            // 2. 模拟真实插件
+            const mockPlugins = [
+                {name: "Chrome PDF Plugin", filename: "internal-pdf-viewer", description: "Portable Document Format"},
+                {name: "Chrome PDF Viewer", filename: "mhjfbmdgcfjbbpaeojofohoefgiehjai", description: ""},
+                {name: "Native Client", filename: "internal-nacl-plugin", description: ""}
+            ];
             Object.defineProperty(navigator, 'plugins', {
-                get: () => [1, 2, 3, 4, 5]
+                get: () => mockPlugins,
+                configurable: true
             });
             
+            // 3. 语言设置
             Object.defineProperty(navigator, 'languages', {
-                get: () => ['zh-CN', 'zh', 'en-US', 'en']
+                get: () => ['zh-CN', 'zh', 'en-US', 'en'],
+                configurable: true
             });
             
-            // 覆盖 permissions.query 避免检测
+            // 4. 覆盖 permissions.query
             const originalQuery = window.navigator.permissions.query;
-            window.navigator.permissions.query = (parameters) => (
-                parameters.name === 'notifications' ?
-                    Promise.resolve({ state: Notification.permission }) :
-                    originalQuery(parameters)
-            );
+            window.navigator.permissions.query = function(parameters) {
+                if (parameters.name === 'notifications' || parameters.name === 'clipboard-read' || parameters.name === 'clipboard-write') {
+                    return Promise.resolve({ state: 'prompt', onchange: null });
+                }
+                return originalQuery.call(navigator.permissions, parameters);
+            };
             
-            // 监听滚动，自动识别当前内容
+            // 5. 覆盖 chrome 对象
+            window.chrome = window.chrome || {};
+            window.chrome.runtime = window.chrome.runtime || {};
+            
+            // 6. 覆盖 Notification 权限
+            if (window.Notification) {
+                Object.defineProperty(Notification, 'permission', {
+                    get: () => 'default'
+                });
+            }
+            
+            // 7. 模拟 WebGL 指纹
+            const getParameter = WebGLRenderingContext.prototype.getParameter;
+            WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                if (parameter === 37445) {
+                    return 'Intel Inc.';
+                }
+                if (parameter === 37446) {
+                    return 'Intel Iris Xe Graphics';
+                }
+                return getParameter(parameter);
+            };
+            
+            // 8. 覆盖 toString 防止检测
+            const originalToString = Function.prototype.toString;
+            Function.prototype.toString = function() {
+                if (this === window.navigator.permissions.query) {
+                    return 'function query() { [native code] }';
+                }
+                return originalToString.call(this);
+            };
+            
+            // ========== 监听滚动，自动识别当前内容 ==========
             let lastVideoId = null;
             let checkInterval = null;
             
@@ -601,6 +687,10 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    # 设置 Qt 属性以支持视频播放
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling, True)
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
+    
     app = QApplication(sys.argv)
     app.setApplicationName("TT-Copy Desktop")
     app.setQuitOnLastWindowClosed(False)  # 关闭窗口不退出，托盘保持运行
