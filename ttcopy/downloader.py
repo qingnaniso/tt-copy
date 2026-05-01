@@ -64,6 +64,37 @@ class VideoDownloader:
                 pass
         return saved
 
+    def download_sync(self, video_url: str, author: str = None, video_id: str = None,
+                       progress_hook=None) -> str:
+        """Synchronous download for CLI usage. No asyncio or browser needed.
+        Uses a single yt-dlp pass: extract info + download in one call,
+        then rename the file with proper metadata."""
+        download_dir = Path(self.config["download_dir"])
+        download_dir.mkdir(parents=True, exist_ok=True)
+
+        # Use yt-dlp default naming for the single-pass download
+        ts = int(time.time())
+        temp_template = str(download_dir / f"%(uploader)s_%(id)s_{ts}.%(ext)s")
+
+        opts = {
+            'format': 'best',
+            'outtmpl': temp_template,
+            'noplaylist': True,
+            'socket_timeout': 30,
+            'http_headers': {
+                'User-Agent': self.config.get('user_agent', ''),
+                'Referer': 'https://www.tiktok.com/',
+            },
+        }
+
+        if progress_hook:
+            opts['progress_hooks'] = [progress_hook]
+
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(video_url, download=True)
+            filename = ydl.prepare_filename(info)
+            return filename
+
     def _do_download(self, opts: dict, url: str) -> str:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
