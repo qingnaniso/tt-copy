@@ -7,9 +7,11 @@ python/
 # 首次安装完成标记
 .setup_done
 
-# 下载的视频
+# 下载的视频及抽帧
 downloads/*.mp4
 downloads/*.webm
+downloads/frames/
+downloads/.DS_Store
 
 # Python 缓存
 __pycache__/
