@@ -58,16 +58,22 @@ echo " =========================================="
 echo ""
 
 while true; do
-    printf " 链接: "
-    read url
+    read "url? 链接: "
     [ -z "$url" ] && continue
     [ "$url" = "q" ] || [ "$url" = "Q" ] && break
+
+    # 清理 URL：只提取 http(s):// 开头的有效链接
+    url=$(echo "$url" | grep -oE 'https?://[^ ]+')
+    if [ -z "$url" ]; then
+        echo " [错误] 未检测到有效链接，请粘贴 https:// 开头的链接"
+        echo ""
+        continue
+    fi
 
     echo ""
     echo " [1] 仅下载"
     echo " [2] 下载并发布到小红书"
-    printf " 选择 (1/2): "
-    read choice
+    read "choice? 选择 (1/2): "
 
     echo ""
     if [ "$choice" = "2" ]; then

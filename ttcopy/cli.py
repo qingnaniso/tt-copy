@@ -61,11 +61,13 @@ def main():
 
     if args.publish and result:
         print("\n--- 发布到小红书 ---")
-        title = input("请输入笔记标题: ").strip()
+        print("请输入笔记标题:")
+        title = sys.stdin.buffer.readline().decode('utf-8').rstrip('\n').strip()
         if not title:
             print("标题不能为空，跳过发布。")
             sys.exit(0)
-        description = input("请输入笔记描述: ").strip()
+        print("请输入笔记描述:")
+        description = sys.stdin.buffer.readline().decode('utf-8').rstrip('\n').strip()
 
         from .publisher import XHSPublisher
 
