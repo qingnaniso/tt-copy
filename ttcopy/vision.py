@@ -3,12 +3,23 @@ Kimi Coding API 使用 Anthropic Messages 兼容格式。"""
 
 import base64
 import json
+import os
 import sys
 import urllib.request
 from pathlib import Path
 
-API_URL = "https://api.kimi.com/coding/v1/messages"
-API_KEY = "sk-kimi-sR3G85Zcefn8huEUSm9ebY0bLacYdT99IzKClDgNpkOFxABlQtiytUsA8aXNVr96"
+CONFIG_PATH = os.path.expanduser("~/.ttcopy/kimi_config.json")
+
+
+def _load_config():
+    if not os.path.exists(CONFIG_PATH):
+        raise FileNotFoundError(f"Kimi 配置文件不存在: {CONFIG_PATH}")
+    with open(CONFIG_PATH) as f:
+        cfg = json.load(f)
+    return cfg["api_url"], cfg["api_key"]
+
+
+API_URL, API_KEY = _load_config()
 
 
 def encode_image(image_path: str) -> dict:
