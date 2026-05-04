@@ -91,43 +91,55 @@ class XHSPublisher:
         print("等待视频上传及处理...")
 
         # 持续与页面交互，防止小红书前端因无用户活动而暂停处理
-        # 小红书检测页面活跃度：滚动距离、鼠标轨迹、页面可见性
-        # 光靠 JS 事件不够，必须用 Playwright 真实模拟鼠标/滚轮操作
+        # 核心：必须用 window.scrollBy 产生真实滚动位移，光 wheel 事件不够
         async def keep_page_alive():
             vp = page.viewport_size or {"width": 1280, "height": 800}
             w, h = vp["width"], vp["height"]
-            for i in range(180):  # 最多保持 15 分钟活跃
+            for i in range(360):  # 最多保持 15 分钟活跃
                 try:
-                    # 1. 大幅滚轮滚动（Playwright 真实滚动，不是 JS dispatch）
-                    await page.mouse.wheel(0, 200 + (i % 4) * 100)
-                    await asyncio.sleep(0.3)
-                    await page.mouse.wheel(0, -(200 + (i % 4) * 100))
-                    # 2. 鼠标在页面中心不规则移动
-                    x = w // 2 + (i % 7 - 3) * 40
-                    y = h // 3 + (i % 9) * 30
+                    # 1. 真实滚动页面（这才是小红书检测的关键）
+                    dy = 150 + (i % 5) * 80
+                    await page.evaluate(f"window.scrollBy(0, {dy})")
+                    await asyncio.sleep(0.15)
+                    await page.evaluate(f"window.scrollBy(0, -{dy})")
+                    # 2. Playwright 鼠标滚轮（增强真实感）
+                    await page.mouse.wheel(0, dy)
+                    await asyncio.sleep(0.15)
+                    await page.mouse.wheel(0, -dy)
+                    # 3. 鼠标在页面内不规则移动
+                    x = w // 2 + ((i * 37) % 11 - 5) * 50
+                    y = h // 3 + ((i * 53) % 13) * 25
                     await page.mouse.move(x, y)
-                    # 3. 再派发 JS 事件作为补充
+                    # 4. 随机点击空白区域（每5轮一次）
+                    if i % 5 == 0:
+                        await page.mouse.click(w // 2, h - 50)
+                    # 5. 补充 JS 事件
                     await page.evaluate("""
                         document.dispatchEvent(new Event('visibilitychange'));
                         window.dispatchEvent(new Event('focus'));
-                        window.dispatchEvent(new Event('scroll'));
                     """)
                 except Exception:
                     pass
-                await asyncio.sleep(2)
+                await asyncio.sleep(1.5)
 
         keep_alive_task = asyncio.create_task(keep_page_alive())
 
         try:
-            # 策略：等待视频封面/缩略图出现，说明处理完毕（最多等 5 分钟）
-            for i in range(60):
-                # 检查是否出现视频封面（处理完成的标志）
-                cover = await page.locator('div.coverImg, div.cover-img, img[class*="cover"], div[class*="thumbnail"], video').count()
-                if cover > 0:
+            # 等待上传/处理完成：同时检测封面 + 标题输入框是否可用
+            for i in range(120):
+                cover = await page.locator(
+                    'div.coverImg, div.cover-img, img[class*="cover"], '
+                    'div[class*="thumbnail"], video, '
+                    'div[class*="poster"], div[class*="preview"], '
+                    'div[class*="upload-success"], div[class*="uploaded"]'
+                ).count()
+                title_ready = await page.locator(
+                    '#publishInput, input[placeholder*="标题"]'
+                ).count()
+                if cover > 0 or title_ready > 0:
                     print("视频处理完成。")
                     break
-                # 打印进度避免用户以为卡死
-                if i % 6 == 0 and i > 0:
+                if i % 10 == 0 and i > 0:
                     print(f"  仍在处理中... ({i * 5}s)")
                 await page.wait_for_timeout(5000)
             else:
