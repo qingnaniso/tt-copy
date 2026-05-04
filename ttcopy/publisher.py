@@ -87,6 +87,12 @@ class XHSPublisher:
         file_input = page.locator('input[type="file"]').first
         await file_input.set_input_files(video_path)
 
+        # 关键：上传进度卡在0%时，延迟一下然后做整屏下滑来激活上传
+        print("等待上传启动，滑动页面激活...")
+        await page.wait_for_timeout(2000)
+        await page.keyboard.press("PageDown")
+        await page.wait_for_timeout(1000)
+
         # 等待视频上传和处理完成
         print("等待视频上传及处理...")
 
@@ -95,25 +101,35 @@ class XHSPublisher:
         async def keep_page_alive():
             vp = page.viewport_size or {"width": 1280, "height": 800}
             w, h = vp["width"], vp["height"]
-            for i in range(360):  # 最多保持 15 分钟活跃
+            for i in range(360):
                 try:
-                    # 1. 真实滚动页面（这才是小红书检测的关键）
-                    dy = 150 + (i % 5) * 80
-                    await page.evaluate(f"window.scrollBy(0, {dy})")
-                    await asyncio.sleep(0.15)
-                    await page.evaluate(f"window.scrollBy(0, -{dy})")
-                    # 2. Playwright 鼠标滚轮（增强真实感）
-                    await page.mouse.wheel(0, dy)
-                    await asyncio.sleep(0.15)
-                    await page.mouse.wheel(0, -dy)
-                    # 3. 鼠标在页面内不规则移动
+                    # 1. 键盘 PageDown — 真正的一屏下滑（模拟人工操作）
+                    await page.keyboard.press("PageDown")
+                    await asyncio.sleep(0.8)
+                    # 2. JS 多方式兜底：滚 window + documentElement + 可能的容器
+                    await page.evaluate("""
+                        (() => {
+                            const dy = window.innerHeight;
+                            window.scrollBy(0, dy);
+                            document.documentElement.scrollBy(0, dy);
+                            // 尝试找页面内实际的滚动容器
+                            const containers = document.querySelectorAll('[class*="scroll"], [class*="content"], [class*="main"], [class*="wrapper"]');
+                            containers.forEach(el => {
+                                if (el.scrollHeight > el.clientHeight) {
+                                    el.scrollBy(0, dy);
+                                }
+                            });
+                        })()
+                    """)
+                    await asyncio.sleep(0.3)
+                    # 3. 鼠标滚轮
+                    await page.mouse.wheel(0, 500)
+                    await asyncio.sleep(0.3)
+                    # 4. 鼠标移动到页面中部并随机位移
                     x = w // 2 + ((i * 37) % 11 - 5) * 50
                     y = h // 3 + ((i * 53) % 13) * 25
                     await page.mouse.move(x, y)
-                    # 4. 随机点击空白区域（每5轮一次）
-                    if i % 5 == 0:
-                        await page.mouse.click(w // 2, h - 50)
-                    # 5. 补充 JS 事件
+                    # 5. JS 事件
                     await page.evaluate("""
                         document.dispatchEvent(new Event('visibilitychange'));
                         window.dispatchEvent(new Event('focus'));
