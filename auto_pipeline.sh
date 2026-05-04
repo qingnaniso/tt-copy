@@ -93,19 +93,19 @@ for f in frames:
         echo "  帧分析 (Kimi): $result"
     done <<< "$frames"
 
-    # --- Step 4: 生成文案 (codex) ---
+    # --- Step 4: 生成文案（冷幽默/反幽默风格）---
     echo "[Step 4] 生成文案..."
     local caption_prompt caption_text xhs_title xhs_desc
-    caption_prompt="你是小红书爆款笔记创作者。根据以下信息生成发布文案：
+    caption_prompt="你是一个面无表情的冷幽默段子手。根据以下信息生成小红书笔记文案：
 
 视频原始标题：$title
 视频帧画面分析：$frame_analysis
 
 输出格式（严格两行）：
-标题：<15到25字，带1到2个emoji，有冲击力和情绪共鸣>
-描述：<口语化朋友安利风格，100字以内，结尾3到5个话题标签>
+标题：<10到20字，不用emoji，冷静克制的事实陈述，带一点荒谬感或冷幽默>
+描述：<冷幽默反幽默风格，50到80字，用平淡语气描述视频内容，不做任何煽情和安利，像在描述一件稀松平常但仔细一想有点好笑的事。不要用感叹号。结尾加2到3个话题标签>
 
-要求：突出松弛感、治愈感、氛围感，避免营销感。"
+风格参考：一本正经地描述无聊的事、过度认真分析日常片段、用新闻播报语气讲废话。不要典型小红书风格，不要治愈松弛氛围这些词。"
 
     caption_text=$(kimi_vision "$caption_prompt" "")
 
@@ -114,8 +114,8 @@ for f in frames:
     xhs_desc=$(echo "$caption_text" | grep "^描述：" | sed 's/^描述：//' | head -1)
 
     # 兜底文案
-    [ -z "$xhs_title" ] && xhs_title="这个视频太治愈了😭看完心情都好了"
-    [ -z "$xhs_desc" ] && xhs_desc="刚刷到的，$author 的内容真的好有感觉…看完就被治愈了✨ #治愈系 #搬运 #每天一个小美好"
+    [ -z "$xhs_title" ] && xhs_title="一段视频被上传到了互联网"
+    [ -z "$xhs_desc" ] && xhs_desc="有人拍了这个视频，然后我看了，现在你也可以看了。事情就是这样。#日常观察 #互联网搬运"
 
     echo "  标题: $xhs_title"
     echo "  描述: $xhs_desc"
