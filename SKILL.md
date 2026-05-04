@@ -20,8 +20,8 @@ auto_pipeline.sh（单一脚本，自驱动，无需人工介入）
   ├─ lark-cli event +subscribe → stdout 管道
   ├─ jq 解析事件 → 正则匹配 tiktok.com / douyin.com
   ├─ ttcopy 下载视频 + 元数据(.meta.json)
-  ├─ ttcopy 抽3帧 → codex exec -i 并行识图
-  ├─ codex exec 生成小红书爆款文案
+  ├─ ttcopy 抽3帧 → Kimi Vision API 并行识图
+  ├─ Kimi API 纯文本生成小红书爆款文案
   ├─ Playwright 自动发布小红书
   └─ lark-cli API 回复飞书消息（3节点通知）
 ```
@@ -112,33 +112,27 @@ for f in frames:
 
 ### Step 3: AI 识图
 
-用 **codex** 对 3 张帧并行做视觉分析（codex 已登录 ChatGPT OAuth，模型 gpt-5.4 支持图像输入）：
+用 **Kimi Vision API**（模型 `kimi-for-coding`，Anthropic 兼容格式）对 3 张帧做视觉分析：
 
 ```bash
-echo "简要描述这个画面：主体是什么、在做什么动作、场景氛围如何？不超过50字。" | codex exec -i <frame_path>
+.venv/bin/python -m ttcopy.vision -i <frame_path> -p "简要描述这个画面：主体是什么、在做什么动作、场景氛围如何？不超过50字。"
 ```
 
 **要求：**
-- 3 张帧**并行调用** codex exec，每帧 timeout=60s
+- 3 张帧**并行调用**，每帧 timeout=60s
 - 提取每帧描述（通常 1-2 句中文），与 Step 1 的**标题+描述元数据**合并，形成视频完整内容理解
-- codex 输出格式：最后几行为纯文本回答，提取即可
 
-**兜底方案（codex 不可用时）：** 直接用 Step 1 输出的标题和描述作为内容理解依据
+**兜底方案（Kimi 不可用时）：** 直接用 Step 1 输出的标题和描述作为内容理解依据
 
 ### Step 4: 生成文案
 
-**角色：** 小红书爆款笔记创作者
+用 **Kimi API** 纯文本模式生成小红书文案（无需图片）：
 
-**标题要求：**
-- 15-25 字
-- 带 1-2 个 emoji
-- 有冲击力、悬念感或情绪共鸣
-- 突出"松弛感""氛围感""治愈感"等情绪价值
+```bash
+.venv/bin/python -m ttcopy.vision -p "<整合了元数据+识图结果的提示词>"
+```
 
-**描述要求：**
-- 口语化，像朋友安利，100 字以内
-- 结尾带 3-5 个`#话题标签`
-- 避免营销感
+**要求同之前：** 15-25字标题、口语化描述、话题标签、治愈感/松弛感风格。
 
 ### Step 5: 发布小红书
 
@@ -194,7 +188,7 @@ lark-cli api POST "/open-apis/im/v1/messages/<message_id>/reply" \
 2. **进程卡住处理**：>30s 无输出且 CPU 时间极低，果断 kill，换直接 publisher 方式
 3. **小红书登录态**：Cookie 失效时浏览器停在登录页，需告知用户扫码
 4. **飞书监听是常驻进程**：启动后持续运行，Ctrl+C 或杀进程停止
-5. **视觉分析**：用 `codex exec -i` 分析每帧（gpt-5.4 支持图像），3 帧并行调用；codex 不可用时用下载时提取的标题/描述
+5. **视觉分析**：用 `python -m ttcopy.vision` 调用 Kimi API（kimi-for-coding，支持图像），3 帧并行；不可用时退化为下载时提取的标题/描述
 6. **每个链接独立处理**：一条消息一个链接，处理完再处理下一条
 7. **元数据增强**：下载同时提取视频标题+描述，保存为 `.meta.json`，与抽帧分析结合生成更精准文案
 8. **上传不卡住**：publisher 后台持续注入 scroll/visibilitychange 事件保持页面活跃，无需人工干预
