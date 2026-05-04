@@ -1,6 +1,6 @@
 #!/bin/bash
 # TikTok → 小红书 全自动流水线（自驱动版）
-# 监听飞书消息 → 检测链接 → 下载→抽帧→识图→文案→发布→通知
+# 监听飞书消息 → 检测链接 → 下载→抽帧→Kimi识图→Kimi文案→发布→通知
 # 用法: ./auto_pipeline.sh
 
 set -uo pipefail
@@ -22,25 +22,14 @@ notify() {
       --data "$payload" --as bot 2>/dev/null
 }
 
-# 提取 codex 输出的有效内容（跳过元信息和tokens行）
-codex_result() {
-    # $1 = prompt, $2 = optional image path
+# 调用 Kimi Vision API（替代 codex）
+kimi_vision() {
     local prompt="$1" image="${2:-}"
-    local tmpfile
-    tmpfile=$(mktemp /tmp/ttcopy-codex-XXXXXX)
-    echo "$prompt" > "$tmpfile"
-
     if [ -n "$image" ] && [ -f "$image" ]; then
-        codex exec -i "$image" < "$tmpfile" 2>/dev/null
+        "$PYTHON" -m ttcopy.vision -i "$image" -p "$prompt" 2>/dev/null
     else
-        codex exec < "$tmpfile" 2>/dev/null
-    fi | grep -v "^tokens used" | grep -v "^OpenAI Codex" | grep -v "^--" | \
-        grep -v "^workdir:" | grep -v "^model:" | grep -v "^provider:" | \
-        grep -v "^Reading prompt" | grep -v "^approval:" | grep -v "^sandbox:" | \
-        grep -v "^reasoning" | grep -v "^session id:" | grep -v "^user$" | \
-        grep -v "^codex$" | grep -v "^______" | grep -v "^$" | tail -1
-
-    rm -f "$tmpfile"
+        echo "$prompt" | "$PYTHON" -m ttcopy.vision 2>/dev/null
+    fi
 }
 
 # === 核心处理函数 ===
@@ -99,9 +88,9 @@ for f in frames:
     while IFS= read -r frame; do
         [ -z "$frame" ] && continue
         local result
-        result=$(codex_result "$vision_prompt" "$frame")
+        result=$(kimi_vision "$vision_prompt" "$frame")
         [ -n "$result" ] && frame_analysis="${frame_analysis}${result}"$'\n'
-        echo "  帧分析: $result"
+        echo "  帧分析 (Kimi): $result"
     done <<< "$frames"
 
     # --- Step 4: 生成文案 (codex) ---
@@ -118,7 +107,7 @@ for f in frames:
 
 要求：突出松弛感、治愈感、氛围感，避免营销感。"
 
-    caption_text=$(codex_result "$caption_prompt" "")
+    caption_text=$(kimi_vision "$caption_prompt" "")
 
     # 尝试从 codex 输出中提取标题和描述
     xhs_title=$(echo "$caption_text" | grep "^标题：" | sed 's/^标题：//' | head -1)
