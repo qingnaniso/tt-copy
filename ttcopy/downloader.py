@@ -65,10 +65,12 @@ class VideoDownloader:
         return saved
 
     def download_sync(self, video_url: str, author: str = None, video_id: str = None,
-                       progress_hook=None) -> str:
+                       progress_hook=None) -> dict:
         """Synchronous download for CLI usage. No asyncio or browser needed.
         Uses a single yt-dlp pass: extract info + download in one call,
-        then rename the file with proper metadata."""
+        then rename the file with proper metadata.
+        Returns dict with keys: filepath, title, description, uploader."""
+        import json
         download_dir = Path(self.config["download_dir"])
         download_dir.mkdir(parents=True, exist_ok=True)
 
@@ -93,7 +95,24 @@ class VideoDownloader:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(video_url, download=True)
             filename = ydl.prepare_filename(info)
-            return filename
+
+        # 提取并保存元数据
+        title = info.get('title', '')
+        description = info.get('description', '')
+        uploader = info.get('uploader', '')
+        meta = {'title': title, 'description': description, 'uploader': uploader}
+
+        # 保存元数据文件
+        meta_path = str(Path(download_dir) / f"{Path(filename).stem}.meta.json")
+        with open(meta_path, 'w', encoding='utf-8') as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+
+        # 输出到 stdout 供管道捕获
+        print(f"标题: {title}")
+        print(f"描述: {description}")
+        print(f"作者: {uploader}")
+
+        return {'filepath': filename, 'title': title, 'description': description, 'uploader': uploader}
 
     def _do_download(self, opts: dict, url: str) -> str:
         with yt_dlp.YoutubeDL(opts) as ydl:

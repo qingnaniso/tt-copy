@@ -28,12 +28,17 @@ class XHSPublisher:
 
         browser_args = [
             "--disable-blink-features=AutomationControlled",
+            "--deny-permission-prompts",
         ]
 
         if os.path.exists(COOKIE_PATH):
             print("加载已保存的登录态...")
             self._browser = await pw.chromium.launch(headless=False, args=browser_args)
-            self._context = await self._browser.new_context(storage_state=COOKIE_PATH)
+            self._context = await self._browser.new_context(
+                storage_state=COOKIE_PATH,
+                geolocation={"latitude": 31.2304, "longitude": 121.4737},  # 上海坐标，静默授予定位权限
+                permissions=["geolocation"],
+            )
             self._page = await self._context.new_page()
 
             # 验证 Cookie 是否仍有效
@@ -52,7 +57,10 @@ class XHSPublisher:
         # 首次登录 / Cookie 失效
         print("请在浏览器中扫码登录小红书...")
         self._browser = await pw.chromium.launch(headless=False, args=browser_args)
-        self._context = await self._browser.new_context()
+        self._context = await self._browser.new_context(
+            geolocation={"latitude": 31.2304, "longitude": 121.4737},
+            permissions=["geolocation"],
+        )
         self._page = await self._context.new_page()
         await self._page.goto(XHS_LOGIN_URL, wait_until="domcontentloaded")
 
@@ -81,21 +89,55 @@ class XHSPublisher:
 
         # 等待视频上传和处理完成
         print("等待视频上传及处理...")
-        await page.wait_for_timeout(3000)
 
-        # 策略：等待视频封面/缩略图出现，说明处理完毕（最多等 5 分钟）
-        for i in range(60):
-            # 检查是否出现视频封面（处理完成的标志）
-            cover = await page.locator('div.coverImg, div.cover-img, img[class*="cover"], div[class*="thumbnail"], video').count()
-            if cover > 0:
-                print("视频处理完成。")
-                break
-            # 打印进度避免用户以为卡死
-            if i % 6 == 0 and i > 0:
-                print(f"  仍在处理中... ({i * 5}s)")
-            await page.wait_for_timeout(5000)
-        else:
-            print("警告: 视频处理超时，尝试继续...")
+        # 持续与页面交互，防止小红书前端因无用户活动而暂停处理
+        # 小红书检测页面活跃度：滚动距离、鼠标轨迹、页面可见性
+        # 光靠 JS 事件不够，必须用 Playwright 真实模拟鼠标/滚轮操作
+        async def keep_page_alive():
+            vp = page.viewport_size or {"width": 1280, "height": 800}
+            w, h = vp["width"], vp["height"]
+            for i in range(180):  # 最多保持 15 分钟活跃
+                try:
+                    # 1. 大幅滚轮滚动（Playwright 真实滚动，不是 JS dispatch）
+                    await page.mouse.wheel(0, 200 + (i % 4) * 100)
+                    await asyncio.sleep(0.3)
+                    await page.mouse.wheel(0, -(200 + (i % 4) * 100))
+                    # 2. 鼠标在页面中心不规则移动
+                    x = w // 2 + (i % 7 - 3) * 40
+                    y = h // 3 + (i % 9) * 30
+                    await page.mouse.move(x, y)
+                    # 3. 再派发 JS 事件作为补充
+                    await page.evaluate("""
+                        document.dispatchEvent(new Event('visibilitychange'));
+                        window.dispatchEvent(new Event('focus'));
+                        window.dispatchEvent(new Event('scroll'));
+                    """)
+                except Exception:
+                    pass
+                await asyncio.sleep(2)
+
+        keep_alive_task = asyncio.create_task(keep_page_alive())
+
+        try:
+            # 策略：等待视频封面/缩略图出现，说明处理完毕（最多等 5 分钟）
+            for i in range(60):
+                # 检查是否出现视频封面（处理完成的标志）
+                cover = await page.locator('div.coverImg, div.cover-img, img[class*="cover"], div[class*="thumbnail"], video').count()
+                if cover > 0:
+                    print("视频处理完成。")
+                    break
+                # 打印进度避免用户以为卡死
+                if i % 6 == 0 and i > 0:
+                    print(f"  仍在处理中... ({i * 5}s)")
+                await page.wait_for_timeout(5000)
+            else:
+                print("警告: 视频处理超时，尝试继续...")
+        finally:
+            keep_alive_task.cancel()
+            try:
+                await keep_alive_task
+            except asyncio.CancelledError:
+                pass
 
         # 填写标题 — 小红书标题输入框
         print("填写标题和描述...")

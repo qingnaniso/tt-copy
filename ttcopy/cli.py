@@ -53,13 +53,14 @@ def main():
 
     try:
         result = downloader.download_sync(url, author, video_id, progress_hook=progress_hook)
-        print(f"已保存: {result}")
+        video_path = result if isinstance(result, str) else result['filepath']
+        print(f"已保存: {video_path}")
     except Exception as e:
         print(f"\n下载失败: {e}")
         print("提示: 如果视频需要登录才能查看，请使用浏览器版 (start.command)")
         sys.exit(1)
 
-    if args.publish and result:
+    if args.publish and video_path:
         print("\n--- 发布到小红书 ---")
         print("请输入笔记标题:")
         title = sys.stdin.buffer.readline().decode('utf-8').rstrip('\n').strip()
@@ -73,7 +74,7 @@ def main():
 
         publisher = XHSPublisher()
         try:
-            publisher.publish(result, title, description)
+            publisher.publish(video_path, title, description)
         except Exception as e:
             print(f"发布失败: {e}")
             sys.exit(1)
