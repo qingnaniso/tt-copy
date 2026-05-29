@@ -1,122 +1,145 @@
 # tt-copy
 
-TikTok 视频一键下载 + 小红书自动发布工具。支持浏览器版、桌面版、CLI 三种使用方式。
+TikTok / 抖音视频一键下载 + AI 生成文案 + 小红书自动发布工具。
 
-## 功能
+支持 **Claude Code Skill**（主要）、浏览器版、桌面版、CLI 三种使用方式。
 
-- **浏览器版** — Playwright 打开 TikTok，刷到喜欢的视频点一下就下载
-- **桌面版** — Playwright + PyQt6 独立窗口，带控制面板和系统托盘
-- **CLI 版** — 粘贴链接直接下载，支持下载后自动发布到小红书
-- 快捷键 **Ctrl+Shift+D**（Mac: **Cmd+Shift+D**）
-- 自动携带浏览器 Cookie，无需手动登录
-- 小红书 Cookie 持久化，首次扫码后自动复用
+---
 
-## 快速开始
+## 快速安装（推荐）
 
-### 浏览器版
-
-双击 `start.command`（Mac）或 `start.bat`（Windows），打开 Chromium 刷 TikTok，点击右下角按钮下载。
-
-### 桌面版
-
-双击 `start_desktop.command`（Mac）或 `start_desktop.bat`（Windows），Playwright 浏览器 + PyQt6 控制面板双窗口运行。
-
-### CLI 版（下载 + 发布小红书）
-
-双击 `start_cli.command`，粘贴 TikTok 链接：
-
-```
- 链接: https://vm.tiktok.com/xxx
- [1] 仅下载
- [2] 下载并发布到小红书
- 选择 (1/2): 2
+```bash
+git clone https://github.com/qingnaniso/tt-copy.git
+cd tt-copy
+chmod +x install.sh && ./install.sh
 ```
 
-选择 `2` 后输入标题和描述，自动上传到小红书创作者中心发布。首次使用需扫码登录，之后自动复用 Cookie。
+脚本会自动完成：Homebrew → Python → ffmpeg → 虚拟环境 → Chromium → 配置文件 → Claude Code Skill 注册。
 
-也可以直接命令行调用：
+**唯一需要手动准备：** 安装过程中会提示输入 Kimi API Key（`sk-kimi-...`）。
+
+> 没有终端习惯？直接在 GitHub 下载 ZIP 解压，双击 `install.sh` 也可以。
+
+---
+
+## 使用方式
+
+### 方式一：Claude Code Skill（主推）
+
+安装完成后，在 Claude Code 中粘贴 TikTok / 抖音链接，自动完成：
+
+```
+下载视频 → 抽取关键帧 → AI 识图 → 生成小红书文案 → 发布到小红书
+```
+
+首次发布小红书时会弹出浏览器扫码登录，之后自动复用 Cookie。
+
+---
+
+### 方式二：CLI 版
+
+双击 `start_cli.command`，粘贴链接交互式操作：
+
+```
+链接: https://vm.tiktok.com/xxx
+[1] 仅下载
+[2] 下载并发布到小红书
+选择 (1/2):
+```
+
+或命令行直接调用：
 
 ```bash
 # 仅下载
-python -m ttcopy.cli "https://vm.tiktok.com/xxx"
+.venv/bin/python -m ttcopy.cli "https://vm.tiktok.com/xxx"
 
-# 下载并发布到小红书
-python -m ttcopy.cli "https://vm.tiktok.com/xxx" --publish
+# 下载并发布小红书
+.venv/bin/python -m ttcopy.cli "https://vm.tiktok.com/xxx" --publish
 ```
 
-### 命令行手动安装
+---
+
+### 方式三：浏览器版
+
+双击 `start.command`，Chromium 打开 TikTok，刷到喜欢的视频点右下角按钮下载，或按 **Cmd+Shift+D**。
+
+---
+
+### 方式四：桌面版
+
+双击 `start_desktop.command`，Playwright 浏览器 + PyQt6 控制面板双窗口，带系统托盘。
+
+需额外安装桌面依赖：
 
 ```bash
-cd ~/Documents/Playground/tt-copy
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-playwright install chromium
+.venv/bin/pip install -r requirements-desktop.txt
 ```
+
+---
+
+## 配置文件
+
+首次安装后会在项目根目录生成 `.env`，可按需修改：
+
+```bash
+# AI 识图 & 文案生成（必填）
+KIMI_API_URL=https://api.kimi.com/coding/v1/messages
+KIMI_API_KEY=sk-kimi-...
+
+# 项目路径（install.sh 自动填写）
+TTCOPY_DIR=/path/to/tt-copy
+
+# 小红书多账号（可选，留空用默认账号）
+XHS_ACCOUNT=
+
+# 飞书自动流水线（默认关闭）
+# LARK_NOTIFY=true
+```
+
+---
 
 ## 项目结构
 
 ```
 tt-copy/
-├── start.command           # Mac 浏览器版启动脚本
-├── start.bat               # Windows 浏览器版启动脚本
-├── start_desktop.command   # Mac 桌面版启动脚本
-├── start_desktop.bat       # Windows 桌面版启动脚本
-├── start_cli.command       # Mac CLI 版启动脚本（下载+发布）
-├── _run.py                 # Windows 嵌入式 Python 启动入口
-├── _run_desktop.py         # Windows 桌面版启动入口
-├── requirements.txt        # Python 依赖
-├── ttcopy/
-│   ├── __init__.py         # 版本号
-│   ├── main.py             # 浏览器版主入口
-│   ├── cli.py              # CLI 入口（yt-dlp 下载 + --publish 发布）
-│   ├── publisher.py        # 小红书发布器（Playwright 自动化创作者中心）
-│   ├── desktop.py          # 桌面版 PyQt6 主窗口
-│   ├── desktop_shell.py    # 桌面版 Playwright + PyQt6 混合架构
-│   ├── interceptor.py      # 网络请求拦截，捕获图片 CDN URL
-│   ├── downloader.py       # 视频/图片下载（yt-dlp + 直接请求）
-│   └── config.py           # 配置（下载目录、UA、viewport 等）
-├── downloads/              # 默认下载目录
-├── DESIGN.md               # 技术设计文档
-└── README.md
+├── install.sh              # 一键安装脚本
+├── .env.example            # 配置模板（复制为 .env 后填写）
+├── SKILL.md                # Claude Code Skill 定义（install.sh 自动注册）
+├── auto_pipeline.sh        # 飞书监听 → 全自动流水线（进阶用法）
+├── start.command           # 浏览器版启动（Mac）
+├── start_desktop.command   # 桌面版启动（Mac）
+├── start_cli.command       # CLI 版启动（Mac）
+├── requirements.txt        # 核心依赖（yt-dlp, playwright）
+├── requirements-desktop.txt # 桌面版额外依赖（PyQt6）
+└── ttcopy/
+    ├── cli.py              # CLI 入口
+    ├── downloader.py       # 视频下载（yt-dlp）
+    ├── frame_extractor.py  # 关键帧提取（ffmpeg）
+    ├── vision.py           # Kimi Vision API（识图 + 文案生成）
+    ├── publisher.py        # 小红书自动发布（Playwright）
+    ├── main.py             # 浏览器版主入口
+    ├── desktop.py          # 桌面版 PyQt6 主窗口
+    └── config.py           # 配置管理
 ```
 
-## 三种模式对比
-
-| 特性 | 浏览器版 | 桌面版 | CLI 版 |
-|------|---------|--------|--------|
-| 启动方式 | `start.command` | `start_desktop.command` | `start_cli.command` |
-| 浏览 TikTok | 内置浏览器 | 内置浏览器 + 控制面板 | 不需要 |
-| 下载方式 | 按钮/快捷键 | 按钮/快捷键 | 粘贴链接 |
-| 发布小红书 | - | - | 支持 |
-| 系统托盘 | - | 支持 | - |
-| 依赖 | Playwright | Playwright + PyQt6 | yt-dlp + Playwright（发布时） |
-
-## 技术方案
-
-- **浏览器版/桌面版**: Playwright 启动 Chromium → JS 注入下载按钮和快捷键 → 导出 Cookie → yt-dlp 下载
-- **CLI 下载**: yt-dlp 直接下载，无需浏览器
-- **小红书发布**: Playwright 打开创作者中心 → `set_input_files` 上传视频 → 填写标题描述 → 点击发布，Cookie 持久化到 `~/.ttcopy/xhs_cookies.json`
+---
 
 ## 常见问题
 
-### Windows 双击 start.bat 一闪而过
+**Mac 提示"无法打开，因为来自身份不明的开发者"**
 
-路径包含中文或文件夹未解压。把项目放到纯英文路径下（如 `D:\tool`），确保是解压后的文件夹。
-
-### 下载失败 403
-
-通常是 Cookie 过期。关闭浏览器重新启动 tt-copy，重新登录 TikTok 后再试。
-
-### Mac 提示"无法打开，因为来自身份不明的开发者"
-
-右键点击 `.command` 文件 → 选择"打开" → 确认打开。或在终端执行：
 ```bash
-chmod +x start.command start_desktop.command start_cli.command
+chmod +x install.sh start.command start_desktop.command start_cli.command
 ```
 
-### 小红书发布失败
+或右键点击文件 → 选择"打开"。
 
-- 首次使用需在弹出的浏览器中扫码登录，登录后 Cookie 自动保存
-- Cookie 过期后会自动弹出浏览器重新登录
-- 确保视频文件为 mp4 格式
+**下载失败 403**
+
+Cookie 过期。重新启动浏览器版登录 TikTok 后重试。
+
+**小红书发布失败**
+
+- 首次使用需扫码登录，Cookie 自动保存后续复用
+- 确保视频为 mp4 格式
+- Cookie 过期会自动弹出浏览器重新登录
