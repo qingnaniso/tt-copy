@@ -5,23 +5,25 @@
 
 set -uo pipefail
 
-TTCOPY_DIR="/Users/qiqingnan/Documents/Playground/tt-copy"
+# === 加载配置 ===
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    # shellcheck source=/dev/null
+    source "$SCRIPT_DIR/.env"
+fi
+TTCOPY_DIR="${TTCOPY_DIR:-$SCRIPT_DIR}"
+
 PYTHON="$TTCOPY_DIR/.venv/bin/python"
 LOCK_DIR="/tmp/ttcopy-locks"
-
-# === 小红书账号切换 ===
-# 不设置 = 默认账号 (xhs_cookies.json)
-# 设置了 = 命名账号 (xhs_cookies_<XHS_ACCOUNT>.json)
-# 切账号只需改这一个变量，然后重启流水线
-# export XHS_ACCOUNT="${XHS_ACCOUNT:-xiaohao}"
 
 mkdir -p "$LOCK_DIR"
 
 # === 工具函数 ===
 
-# 回复飞书消息（用 jq 安全构造 JSON）
+# 回复飞书消息（LARK_NOTIFY=true 时才发送，默认关闭）
 notify() {
     local msg_id="$1" text="$2"
+    [ "${LARK_NOTIFY:-false}" = "true" ] || return 0
     local payload
     payload=$(jq -n --arg t "$text" '{msg_type:"text", content:({text:$t}|tojson)}')
     lark-cli api POST "/open-apis/im/v1/messages/$msg_id/reply" \

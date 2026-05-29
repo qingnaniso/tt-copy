@@ -12,8 +12,17 @@ CONFIG_PATH = os.path.expanduser("~/.ttcopy/kimi_config.json")
 
 
 def _load_config():
+    # 优先读环境变量（shell source .env 后自动注入到子进程）
+    api_url = os.environ.get("KIMI_API_URL")
+    api_key = os.environ.get("KIMI_API_KEY")
+    if api_url and api_key:
+        return api_url, api_key
+    # Fallback: 旧版 ~/.ttcopy/kimi_config.json（向后兼容）
     if not os.path.exists(CONFIG_PATH):
-        raise FileNotFoundError(f"Kimi 配置文件不存在: {CONFIG_PATH}")
+        raise FileNotFoundError(
+            f"Kimi 未配置。请在 .env 中设置 KIMI_API_KEY / KIMI_API_URL，"
+            f"或创建配置文件: {CONFIG_PATH}"
+        )
     with open(CONFIG_PATH) as f:
         cfg = json.load(f)
     return cfg["api_url"], cfg["api_key"]

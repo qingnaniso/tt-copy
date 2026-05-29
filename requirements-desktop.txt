@@ -1,0 +1,5 @@
+# 桌面版专用依赖（start_desktop.command 使用）
+# 核心依赖已包含在 requirements.txt 中
+-r requirements.txt
+PyQt6>=6.6.0
+PyQt6-WebEngine>=6.6.0
