@@ -76,7 +76,8 @@ done
 | `.venv/bin/python` | Python venv |
 | `downloads/` | 视频下载目录 |
 | `downloads/frames/` | 抽帧输出目录 |
-| `~/.ttcopy/xhs_cookies.json` | 小红书登录 Cookie |
+| `~/.ttcopy/xhs_cookies.json` | 小红书登录 Cookie（默认账号） |
+| `~/.ttcopy/xhs_cookies_<账号>.json` | 小红书登录 Cookie（命名账号） |
 
 ### Step 1: 下载视频（含元数据）
 
@@ -132,7 +133,7 @@ for f in frames:
 .venv/bin/python -m ttcopy.vision -p "<整合了元数据+识图结果的提示词>"
 ```
 
-**要求同之前：** 15-25字标题、口语化描述、话题标签、治愈感/松弛感风格。
+**风格要求：** 平铺直叙，带一点点自然感情色彩。标题10-20字不用emoji，像普通人刷到视频随手转发的感叹。
 
 ### Step 5: 发布小红书
 
@@ -147,7 +148,9 @@ publisher.publish('<video_path>', '<title>', '<description>')
 
 - 后台运行，timeout=300s
 - 浏览器会弹出（headless=False），用户可见，不需要操作
-- Cookie 从 `~/.ttcopy/xhs_cookies.json` 加载
+- Cookie 从 `~/.ttcopy/xhs_cookies${XHS_ACCOUNT:+\_}${XHS_ACCOUNT}.json` 加载
+  - 默认：`xhs_cookies.json`
+  - 设 `XHS_ACCOUNT=xiaohao` → `xhs_cookies_xiaohao.json`
 
 **成功输出标志：**
 ```
@@ -186,7 +189,13 @@ lark-cli api POST "/open-apis/im/v1/messages/<message_id>/reply" \
 
 1. **不要重复下载已存在的视频**：发布时直接用 `publisher.publish()`，不走 `cli.py --publish`
 2. **进程卡住处理**：>30s 无输出且 CPU 时间极低，果断 kill，换直接 publisher 方式
-3. **小红书登录态**：Cookie 失效时浏览器停在登录页，需告知用户扫码
+3. **小红书登录态 & 多账号切换**：
+   - Cookie 失效时浏览器停在登录页，需告知用户扫码
+   - 多账号通过环境变量 `XHS_ACCOUNT` 切换，Cookie 保存在 `~/.ttcopy/xhs_cookies_<账号>.json`
+   - **临时切换**：`XHS_ACCOUNT=账号名 ./auto_pipeline.sh`
+   - **永久切换**：修改 `auto_pipeline.sh` 第15行的 `XHS_ACCOUNT` 变量值
+   - 设空 `XHS_ACCOUNT=""` 切回默认账号
+   - 切账号后首次使用会自动弹出登录页扫码，之后持久保存
 4. **飞书监听是常驻进程**：启动后持续运行，Ctrl+C 或杀进程停止
 5. **视觉分析**：用 `python -m ttcopy.vision` 调用 Kimi API（kimi-for-coding，支持图像），3 帧并行；不可用时退化为下载时提取的标题/描述
 6. **每个链接独立处理**：一条消息一个链接，处理完再处理下一条

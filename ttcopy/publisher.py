@@ -6,7 +6,9 @@ from pathlib import Path
 
 from playwright.async_api import async_playwright
 
-COOKIE_PATH = os.path.expanduser("~/.ttcopy/xhs_cookies.json")
+_account = os.environ.get("XHS_ACCOUNT", "")
+_suffix = f"_{_account}" if _account else ""
+COOKIE_PATH = os.path.expanduser(f"~/.ttcopy/xhs_cookies{_suffix}.json")
 XHS_LOGIN_URL = "https://creator.xiaohongshu.com/login"
 XHS_PUBLISH_URL = "https://creator.xiaohongshu.com/publish/publish"
 
@@ -73,6 +75,36 @@ class XHSPublisher:
         await self._context.storage_state(path=COOKIE_PATH)
         print(f"登录态已保存到 {COOKIE_PATH}")
 
+    async def _scroll_page_for_real(self, page):
+        """找到页面上真正可滚动的元素并做来回滚动。
+
+        小红书发布页选文件前 maxScroll=0，window.scrollBy 无效。
+        必须等上传UI出现后，找到实际的可滚动容器来滚。
+        """
+        result = await page.evaluate('''() => {
+            let scrolled = 0;
+            // 遍历所有元素找可滚动容器
+            document.querySelectorAll('*').forEach(el => {
+                if (el.scrollHeight > el.clientHeight + 5) {
+                    // 滚下去
+                    el.scrollBy(0, el.clientHeight * 0.6);
+                    // 异步滚回来
+                    setTimeout(() => {
+                        el.scrollBy(0, -el.clientHeight * 0.5);
+                    }, 150);
+                    scrolled++;
+                }
+            });
+            // 同时尝试 window 滚动（兜底）
+            if (document.documentElement.scrollHeight > window.innerHeight) {
+                window.scrollBy(0, window.innerHeight * 0.6);
+                setTimeout(() => window.scrollBy(0, -window.innerHeight * 0.5), 150);
+                scrolled++;
+            }
+            return scrolled;
+        }''')
+        return result
+
     async def _upload_and_publish(self, video_path: str, title: str, description: str):
         """上传视频并填写标题、描述，然后发布。"""
         page = self._page
@@ -82,84 +114,49 @@ class XHSPublisher:
             await page.goto(XHS_PUBLISH_URL, wait_until="domcontentloaded")
             await page.wait_for_timeout(2000)
 
-        # 上传视频文件
+        # === Step 1: 选择文件 ===
         print("上传视频中...")
         file_input = page.locator('input[type="file"]').first
         await file_input.set_input_files(video_path)
 
-        # 关键：上传进度卡在0%时，延迟一下然后做整屏下滑来激活上传
-        print("等待上传启动，滑动页面激活...")
-        await page.wait_for_timeout(2000)
-        await page.keyboard.press("PageDown")
-        await page.wait_for_timeout(1000)
+        # === Step 2: 等上传UI出现 → 立刻做真正滚动激活上传 ===
+        print("等待上传UI出现...")
+        ui_seen = False
+        for i in range(10):
+            await page.wait_for_timeout(1000)
+            has_ui = await page.evaluate(
+                '!!document.querySelector("[class*=\\"progress\\"]")'
+            )
+            if has_ui and not ui_seen:
+                ui_seen = True
+                print("  上传UI已出现，执行来回滚动激活...")
+                # 等UI渲染完（100ms），然后滚动
+                await asyncio.sleep(0.2)
+                n = await self._scroll_page_for_real(page)
+                print(f"  滚动 {n} 个容器")
+                await asyncio.sleep(0.5)
+                # 再做一次反向滚动确保
+                await self._scroll_page_for_real(page)
+                break
 
-        # 等待视频上传和处理完成
-        print("等待视频上传及处理...")
+        if not ui_seen:
+            print("  未检测到上传UI")
 
-        # 持续与页面交互，防止小红书前端因无用户活动而暂停处理
-        # 核心：必须用 window.scrollBy 产生真实滚动位移，光 wheel 事件不够
-        async def keep_page_alive():
-            vp = page.viewport_size or {"width": 1280, "height": 800}
-            w, h = vp["width"], vp["height"]
-            for i in range(360):
-                try:
-                    # 1. 键盘 PageDown — 真正的一屏下滑（模拟人工操作）
-                    await page.keyboard.press("PageDown")
-                    await asyncio.sleep(0.8)
-                    # 2. JS 多方式兜底：滚 window + documentElement + 可能的容器
-                    await page.evaluate("""
-                        (() => {
-                            const dy = window.innerHeight;
-                            window.scrollBy(0, dy);
-                            document.documentElement.scrollBy(0, dy);
-                            // 尝试找页面内实际的滚动容器
-                            const containers = document.querySelectorAll('[class*="scroll"], [class*="content"], [class*="main"], [class*="wrapper"]');
-                            containers.forEach(el => {
-                                if (el.scrollHeight > el.clientHeight) {
-                                    el.scrollBy(0, dy);
-                                }
-                            });
-                        })()
-                    """)
-                    await asyncio.sleep(0.3)
-                    # 3. 鼠标滚轮
-                    await page.mouse.wheel(0, 500)
-                    await asyncio.sleep(0.3)
-                    # 4. 鼠标移动到页面中部并随机位移
-                    x = w // 2 + ((i * 37) % 11 - 5) * 50
-                    y = h // 3 + ((i * 53) % 13) * 25
-                    await page.mouse.move(x, y)
-                    # 5. JS 事件
-                    await page.evaluate("""
-                        document.dispatchEvent(new Event('visibilitychange'));
-                        window.dispatchEvent(new Event('focus'));
-                    """)
-                except Exception:
-                    pass
-                await asyncio.sleep(1.5)
+        # === Step 3: 等上传进度变化（同时做保活） ===
+        print("等待上传进度...")
+        upload_ok = await self._wait_for_upload_start(page, timeout=20)
 
-        keep_alive_task = asyncio.create_task(keep_page_alive())
+        if not upload_ok:
+            # 再试一次滚动
+            print("  进度未变化，再次尝试滚动...")
+            await self._scroll_page_for_real(page)
+            await asyncio.sleep(1)
+            upload_ok = await self._wait_for_upload_start(page, timeout=15)
 
+        # === Step 4: 大滚动保活，等待处理完成 ===
+        keep_alive_task = asyncio.create_task(self._keep_page_active(page))
         try:
-            # 等待上传/处理完成：同时检测封面 + 标题输入框是否可用
-            for i in range(120):
-                cover = await page.locator(
-                    'div.coverImg, div.cover-img, img[class*="cover"], '
-                    'div[class*="thumbnail"], video, '
-                    'div[class*="poster"], div[class*="preview"], '
-                    'div[class*="upload-success"], div[class*="uploaded"]'
-                ).count()
-                title_ready = await page.locator(
-                    '#publishInput, input[placeholder*="标题"]'
-                ).count()
-                if cover > 0 or title_ready > 0:
-                    print("视频处理完成。")
-                    break
-                if i % 10 == 0 and i > 0:
-                    print(f"  仍在处理中... ({i * 5}s)")
-                await page.wait_for_timeout(5000)
-            else:
-                print("警告: 视频处理超时，尝试继续...")
+            await self._wait_for_processing_complete(page, timeout=600)
         finally:
             keep_alive_task.cancel()
             try:
@@ -167,34 +164,185 @@ class XHSPublisher:
             except asyncio.CancelledError:
                 pass
 
-        # 填写标题 — 小红书标题输入框
+        # === Step 4: 填写标题和描述 ===
         print("填写标题和描述...")
         title_input = page.locator('#publishInput, input[placeholder*="标题"], input[class*="title"]').first
         await title_input.click()
         await title_input.fill("")
         await page.keyboard.type(title, delay=50)
 
-        # 填写描述 — contenteditable 区域
         desc_editor = page.locator('div[contenteditable="true"], div[class*="ql-editor"], div[class*="desc"] [contenteditable]').first
         await desc_editor.click()
         await page.keyboard.type(description, delay=30)
 
         await page.wait_for_timeout(1000)
 
-        # 点击发布按钮
+        # === Step 5: 发布 ===
         print("发布中...")
-        publish_btn = page.locator('button:has-text("发布"), button[class*="publish"]').first
-        await publish_btn.click()
+        await page.wait_for_timeout(1500)
 
-        # 等待发布结果（最多 15 秒）
-        for _ in range(5):
+        # 先 dump 所有按钮文本，便于调试
+        btn_texts = await page.evaluate("""
+            () => Array.from(document.querySelectorAll('button, [role=button]'))
+                        .map(b => b.innerText.trim())
+                        .filter(t => t.length > 0)
+        """)
+        print(f"  页面按钮: {btn_texts}")
+
+        # 尝试多种方式找发布按钮（XHS 用 div.btn-wrapper 而非 button）
+        clicked = False
+        for selector in [
+            'div.btn-wrapper:has-text("发布笔记")',
+            'div.btn-inner:has-text("发布笔记")',
+            'span.btn-text:has-text("发布笔记")',
+            '[class*="btn"]:has-text("发布笔记")',
+            'button:has-text("发布")',
+            'button:has-text("发布笔记")',
+            'button[class*="publish"]',
+            '.publish-btn',
+        ]:
+            try:
+                btn = page.locator(selector).first
+                if await btn.count() > 0:
+                    await btn.scroll_into_view_if_needed()
+                    await btn.click(timeout=5000)
+                    print(f"  点击成功: {selector}")
+                    clicked = True
+                    break
+            except Exception:
+                continue
+
+        if not clicked:
+            # JS 兜底：找包含"发布"文字的按钮
+            result = await page.evaluate("""
+                () => {
+                    const btns = Array.from(document.querySelectorAll('button, [role=button], a'));
+                    const target = btns.find(b => b.innerText.includes('发布') && !b.disabled);
+                    if (target) { target.click(); return target.innerText.trim(); }
+                    return null;
+                }
+            """)
+            if result:
+                print(f"  JS 点击成功: {result}")
+                clicked = True
+
+        if not clicked:
+            print("  未找到发布按钮，请手动在浏览器中点击发布。")
+            await page.wait_for_timeout(30000)
+
+        for _ in range(8):
             await page.wait_for_timeout(3000)
-            success = await page.locator('text=/发布成功|已发布/').count()
-            if success > 0 or "publish" not in page.url:
+            current_url = page.url
+            # 检查成功文字（XHS 可能用不同措辞）
+            success_texts = await page.evaluate("""
+                () => document.body.innerText
+            """)
+            if any(kw in success_texts for kw in ["发布成功", "已发布", "发布完成", "笔记发布"]):
                 print("发布成功！")
                 return
+            # URL 跳走也算成功
+            if "publish/publish" not in current_url:
+                print(f"发布成功！（跳转至 {current_url}）")
+                return
 
-        print("发布状态未确认，请在浏览器中检查。")
+        print("发布状态未确认，请在浏览器中检查。（按钮已点击，大概率已发布）")
+
+    async def _keep_page_active(self, page):
+        """上传确认后的正常保活 —— 大滚动防止处理过程中页面休眠。
+
+        每 2 秒一轮：PageDown → JS scrollBy → wheel → 鼠标位移。
+        注意：此方法在上传已确认启动后才使用，避免滚动干扰上传UI。
+        """
+        vp = page.viewport_size or {"width": 1280, "height": 800}
+        w, h = vp["width"], vp["height"]
+        for i in range(400):
+            try:
+                await page.keyboard.press("PageDown")
+                await asyncio.sleep(0.6)
+                await page.evaluate(f"window.scrollBy(0, {h // 2})")
+                await asyncio.sleep(0.2)
+                await page.mouse.wheel(0, 400)
+                await asyncio.sleep(0.2)
+                x = w // 2 + ((i * 37) % 11 - 5) * 50
+                y = h // 3 + ((i * 53) % 13) * 25
+                await page.mouse.move(x, y)
+                await page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+            except Exception:
+                pass
+            await asyncio.sleep(1.0)
+
+    async def _wait_for_upload_start(self, page, timeout: int = 15) -> bool:
+        """等待上传开始（进度从0%开始变动）。
+
+        返回 True 表示上传已启动，False 表示超时或上传UI消失（被放弃）。
+        """
+        stuck_at_zero_since = -1
+        upload_ui_seen = False
+
+        for i in range(timeout):
+            await page.wait_for_timeout(1000)
+            text = await page.evaluate('''() => {
+                const els = document.querySelectorAll('[class*="progress"]');
+                for (const el of els) {
+                    const t = el.textContent || "";
+                    if (t.includes("上传中") || /\\d+%/.test(t)) {
+                        return t.trim().substring(0, 120);
+                    }
+                }
+                return "";
+            }''')
+
+            if not text:
+                if upload_ui_seen:
+                    # 上传UI出现过但消失了 → 页面放弃了上传
+                    print(f"  上传UI已消失（页面放弃上传）")
+                    return False
+                if i % 5 == 0 and i > 0:
+                    print(f"  等待上传UI出现... ({i}s)")
+                continue
+
+            upload_ui_seen = True
+            has_zero = "0%" in text
+            progressing = any(
+                p in text for p in
+                ["1%", "2%", "3%", "4%", "5%", "6%", "7%", "8%", "9%", "100%"]
+            )
+
+            if progressing:
+                print(f"  上传已启动: {text[:100]}")
+                return True
+
+            if has_zero:
+                if stuck_at_zero_since < 0:
+                    stuck_at_zero_since = i
+                elif i - stuck_at_zero_since >= 4:
+                    # 卡在0%超过4秒
+                    print(f"  上传卡在0%（已{i - stuck_at_zero_since}秒）")
+                    return False
+
+        if upload_ui_seen and stuck_at_zero_since >= 0:
+            print(f"  上传UI存在但进度始终为0%")
+        return False
+
+    async def _wait_for_processing_complete(self, page, timeout: int = 600):
+        """等待上传+转码处理完成（检测封面/标题输入框出现）。"""
+        for i in range(timeout // 5):
+            cover = await page.locator(
+                'div.coverImg, div.cover-img, img[class*="cover"], '
+                'div[class*="thumbnail"], video, '
+                'div[class*="poster"], div[class*="preview"], '
+                'div[class*="upload-success"], div[class*="uploaded"]'
+            ).count()
+            title_ready = await page.locator(
+                '#publishInput, input[placeholder*="标题"]'
+            ).count()
+            if cover > 0 or title_ready > 0:
+                print("视频处理完成。")
+                return
+            if i % 10 == 0 and i > 0:
+                print(f"  仍在处理中... ({i * 5}s)")
+            await page.wait_for_timeout(5000)
+        print("警告: 视频处理超时，尝试继续...")
 
     async def publish_async(self, video_path: str, title: str, description: str):
         """异步发布视频到小红书。"""

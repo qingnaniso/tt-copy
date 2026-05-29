@@ -9,6 +9,12 @@ TTCOPY_DIR="/Users/qiqingnan/Documents/Playground/tt-copy"
 PYTHON="$TTCOPY_DIR/.venv/bin/python"
 LOCK_DIR="/tmp/ttcopy-locks"
 
+# === 小红书账号切换 ===
+# 不设置 = 默认账号 (xhs_cookies.json)
+# 设置了 = 命名账号 (xhs_cookies_<XHS_ACCOUNT>.json)
+# 切账号只需改这一个变量，然后重启流水线
+# export XHS_ACCOUNT="${XHS_ACCOUNT:-xiaohao}"
+
 mkdir -p "$LOCK_DIR"
 
 # === 工具函数 ===
@@ -93,23 +99,22 @@ for f in frames:
         echo "  帧分析 (Kimi): $result"
     done <<< "$frames"
 
-    # --- Step 4: 生成文案（冷幽默/反幽默风格）---
+    # --- Step 4: 生成文案 ---
     echo "[Step 4] 生成文案..."
     local caption_prompt caption_text xhs_title xhs_desc
-    caption_prompt="你是一个中二又面瘫的冷幽默写手。根据以下信息给一篇小红书笔记写文案：
+    caption_prompt="根据以下信息生成小红书笔记文案：
 
 视频原始标题：$title
 视频帧画面分析：$frame_analysis
 
 输出格式（严格两行）：
-标题：<8到15字，必用emoji点缀，冷吐槽/中二发言/废话文学，像在给一件无聊的事情配史诗级BGM的感觉，搞笑不正经>
-描述：<30到50字，不要描述视频内容，用假装严肃的口吻做离谱点评，一句到位不啰嗦。结尾加2个话题标签>
+标题：<平铺直叙，点出视频的核心看点，允许有一点感情色彩，比如"回忆杀""太绝了""谁懂"这种，但不要夸张。不用emoji，10到20字>
+描述：<简单一两句话带过，不用描述视频内容，像随手转发的感叹。结尾加2个话题标签>
 
 风格参考：
-- 把鸡毛蒜皮说成人类奇迹，把翻车现场说成行为艺术
-- 一本正经胡说八道，像在写《地球人迷惑行为观察日记》
-- 中二旁白语气，假装这是件不得了的大事
-- 杜绝小红书标准文案味，杜绝治愈松弛氛围等词，杜绝过度描述"
+- 像普通人刷到有趣视频后随手转发配的一句话
+- 自然、不端着、不做作
+- 杜绝小红书营销文案味，杜绝治愈松弛氛围等词，杜绝冷幽默和中二风格"
 
     caption_text=$(kimi_vision "$caption_prompt" "")
 
@@ -118,8 +123,8 @@ for f in frames:
     xhs_desc=$(echo "$caption_text" | grep "^描述：" | sed 's/^描述：//' | head -1)
 
     # 兜底文案
-    [ -z "$xhs_title" ] && xhs_title="地球人又开始了😐"
-    [ -z "$xhs_desc" ] && xhs_desc="本次人类行为已归档，编号随缘。下一段。#人类迷惑行为 #严肃记录"
+    [ -z "$xhs_title" ] && xhs_title="刷到了一个视频"
+    [ -z "$xhs_desc" ] && xhs_desc="挺有意思的，分享一下。#日常 #搬运"
 
     echo "  标题: $xhs_title"
     echo "  描述: $xhs_desc"
